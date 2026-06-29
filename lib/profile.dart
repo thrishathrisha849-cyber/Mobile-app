@@ -1437,6 +1437,20 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
               );
             },
           ),
+          const Divider(color: Color(0xFF232326), height: 1.0, indent: 16.0, endIndent: 16.0),
+          ListTile(
+            leading: const Icon(Icons.calendar_month_rounded, color: Color(0xFFD30814), size: 20.0),
+            title: const Text('Attendance', style: TextStyle(color: Colors.white, fontSize: 14.5, fontWeight: FontWeight.bold)),
+            trailing: const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white70, size: 14.0),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const AttendanceScreen(),
+                ),
+              );
+            },
+          ),
         ],
       ),
     );
@@ -5524,6 +5538,706 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ----------------------------------------------------
+// Attendance Screen
+// ----------------------------------------------------
+class AttendanceScreen extends StatefulWidget {
+  const AttendanceScreen({super.key});
+
+  @override
+  State<AttendanceScreen> createState() => _AttendanceScreenState();
+}
+
+class _AttendanceScreenState extends State<AttendanceScreen> {
+  final String _monthYear = 'April 2026';
+  final List<String> _daysOfWeek = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+
+  void _showPolicyDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF141416),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20.0),
+          side: BorderSide(color: Colors.white.withOpacity(0.05), width: 1.0),
+        ),
+        title: Row(
+          children: const [
+            Icon(Icons.info_outline_rounded, color: Color(0xFFD30814), size: 24.0),
+            SizedBox(width: 10.0),
+            Text(
+              'Attendance Policy',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: ListBody(
+            children: const [
+              Text(
+                '1. Consistency Requirement',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14.0),
+              ),
+              SizedBox(height: 6.0),
+              Text(
+                'Members are required to maintain a minimum of 90% attendance across the 90-day challenge to remain eligible for standard certifications.',
+                style: TextStyle(color: Color(0xFF8E8E93), fontSize: 12.0, height: 1.35),
+              ),
+              SizedBox(height: 16.0),
+              Text(
+                '2. Mastermind Eligibility',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14.0),
+              ),
+              SizedBox(height: 6.0),
+              Text(
+                'To qualify for Mastermind groups and exclusive 1-on-1 coaching sessions, a 95% threshold is required. Dropping below 90% will temporarily suspend 1-on-1 access.',
+                style: TextStyle(color: Color(0xFF8E8E93), fontSize: 12.0, height: 1.35),
+              ),
+              SizedBox(height: 16.0),
+              Text(
+                '3. Absent & Streak Rules',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14.0),
+              ),
+              SizedBox(height: 6.0),
+              Text(
+                'Marking attendance daily preserves your Streak count. Missed days reset active streaks but do not impact historically verified points.',
+                style: TextStyle(color: Color(0xFF8E8E93), fontSize: 12.0, height: 1.35),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              'Understood',
+              style: TextStyle(color: Color(0xFFD30814), fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF050505),
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0.0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20.0),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          child: Center(
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 500),
+              padding: const EdgeInsets.symmetric(horizontal: 20.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 8.0),
+                  // Title Header
+                  const Text(
+                    'Attendance',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 32.0,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: -0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 6.0),
+                  const Text(
+                    'Track your consistency and commitment to the 90-day challenge.',
+                    style: TextStyle(
+                      color: Color(0xFF8E8E93),
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 24.0),
+
+                  // 1. Current Momentum (Streak Card)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(24.0),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFD30814),
+                      borderRadius: BorderRadius.circular(20.0),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: const [
+                              Text(
+                                'CURRENT MOMENTUM',
+                                style: TextStyle(
+                                  color: Colors.white60,
+                                  fontSize: 8.5,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 1.0,
+                                ),
+                              ),
+                              SizedBox(height: 8.0),
+                              Text(
+                                '7 Day Streak Active',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 22.0,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              SizedBox(height: 8.0),
+                              Text(
+                                'You\'re in the top 5% of elite performers this month. Keep the fire burning!',
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12.0,
+                                  height: 1.35,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 16.0),
+                        const Icon(
+                          Icons.whatshot_rounded,
+                          color: Colors.white,
+                          size: 48.0,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16.0),
+
+                  // 2. Status Card (Elite Performer)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 16.0),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF141416),
+                      borderRadius: BorderRadius.circular(20.0),
+                      border: Border.all(
+                        color: Colors.white.withOpacity(0.04),
+                        width: 1.0,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 4.0,
+                          height: 36.0,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFD30814),
+                            borderRadius: BorderRadius.circular(2.0),
+                          ),
+                        ),
+                        const SizedBox(width: 14.0),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'STATUS',
+                                style: TextStyle(
+                                  color: Color(0xFF8E8E93),
+                                  fontSize: 8.0,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                              const SizedBox(height: 4.0),
+                              const Text(
+                                'Elite Performer',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15.0,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              const SizedBox(height: 6.0),
+                              Row(
+                                children: [
+                                  SizedBox(
+                                    width: 48.0,
+                                    height: 16.0,
+                                    child: Stack(
+                                      children: const [
+                                        Positioned(
+                                          left: 0,
+                                          child: CircleAvatar(
+                                            radius: 8.0,
+                                            backgroundColor: Color(0xFF5D1315),
+                                          ),
+                                        ),
+                                        Positioned(
+                                          left: 10,
+                                          child: CircleAvatar(
+                                            radius: 8.0,
+                                            backgroundColor: Color(0xFFD30814),
+                                          ),
+                                        ),
+                                        Positioned(
+                                          left: 20,
+                                          child: CircleAvatar(
+                                            radius: 8.0,
+                                            backgroundColor: Color(0xFFF7C3C5),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6.0),
+                                  const Text(
+                                    '+244 members active today',
+                                    style: TextStyle(
+                                      color: Color(0xFF8E8E93),
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16.0),
+
+                  // 3. Stats Grid
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildAttendanceStatCard(
+                          icon: Icons.check_circle_rounded,
+                          title: 'PRESENT',
+                          value: '28',
+                          label: 'Days this period',
+                        ),
+                      ),
+                      const SizedBox(width: 12.0),
+                      Expanded(
+                        child: _buildAttendanceStatCard(
+                          icon: Icons.cancel_rounded,
+                          title: 'ABSENT',
+                          value: '02',
+                          label: 'Days this period',
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12.0),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildAttendanceStatCard(
+                          icon: Icons.electric_bolt_rounded,
+                          title: 'STREAK',
+                          value: '07',
+                          label: 'Best 14 days',
+                        ),
+                      ),
+                      const SizedBox(width: 12.0),
+                      Expanded(
+                        child: _buildAttendanceStatCard(
+                          icon: Icons.percent_rounded,
+                          title: 'RATE',
+                          value: '93%',
+                          label: 'Target: 90%',
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 28.0),
+
+                  // 4. Monthly attendance calendar View
+                  _buildMonthlyCalendar(),
+                  const SizedBox(height: 28.0),
+
+                  // 5. Attendance Policy Section
+                  _buildPolicySection(),
+                  const SizedBox(height: 36.0),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAttendanceStatCard({
+    required IconData icon,
+    required String title,
+    required String value,
+    required String label,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(18.0),
+      decoration: BoxDecoration(
+        color: const Color(0xFF141416),
+        borderRadius: BorderRadius.circular(16.0),
+        border: Border.all(
+          color: Colors.white.withOpacity(0.04),
+          width: 1.0,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: const Color(0xFFD30814), size: 14.0),
+              const SizedBox(width: 6.0),
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Color(0xFF8E8E93),
+                  fontSize: 8.5,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10.0),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 24.0,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 4.0),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF8E8E93),
+              fontSize: 10.0,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMonthlyCalendar() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20.0),
+      decoration: BoxDecoration(
+        color: const Color(0xFF141416),
+        borderRadius: BorderRadius.circular(20.0),
+        border: Border.all(
+          color: Colors.white.withOpacity(0.04),
+          width: 1.0,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Month navigation header
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _monthYear,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16.5,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 2.0),
+                  const Text(
+                    'Monthly attendance performance',
+                    style: TextStyle(
+                      color: Color(0xFF8E8E93),
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+              Row(
+                children: const [
+                  Icon(Icons.chevron_left_rounded, color: Color(0xFF8E8E93), size: 22.0),
+                  SizedBox(width: 8.0),
+                  Icon(Icons.calendar_month_rounded, color: Color(0xFFD30814), size: 18.0),
+                  SizedBox(width: 8.0),
+                  Icon(Icons.chevron_right_rounded, color: Color(0xFF8E8E93), size: 22.0),
+                ],
+              )
+            ],
+          ),
+          const SizedBox(height: 24.0),
+
+          // Days of Week Header
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: _daysOfWeek.map((day) {
+              return Expanded(
+                child: Text(
+                  day,
+                  style: const TextStyle(
+                    color: Color(0xFF6E6E73),
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 14.0),
+
+          // Calendar Days Grid (Hardcoded for April 2026 starting Wed)
+          // Row 1: March 29, 30, 31 (greyed), April 1, 2, 3, 4
+          _buildCalendarWeekRow([
+            {'day': 29, 'type': 'prev'},
+            {'day': 30, 'type': 'prev'},
+            {'day': 31, 'type': 'prev'},
+            {'day': 1, 'type': 'present'},
+            {'day': 2, 'type': 'present'},
+            {'day': 3, 'type': 'present'},
+            {'day': 4, 'type': 'present'},
+          ]),
+          const SizedBox(height: 10.0),
+
+          // Row 2: April 5, 6, 7, 8, 9, 10, 11
+          _buildCalendarWeekRow([
+            {'day': 5, 'type': 'present'},
+            {'day': 6, 'type': 'absent'},
+            {'day': 7, 'type': 'present'},
+            {'day': 8, 'type': 'present'},
+            {'day': 9, 'type': 'present'},
+            {'day': 10, 'type': 'present'},
+            {'day': 11, 'type': 'present'},
+          ]),
+          const SizedBox(height: 10.0),
+
+          // Row 3: April 12, 13, 14, 15, 16, 17, 18
+          _buildCalendarWeekRow([
+            {'day': 12, 'type': 'present'},
+            {'day': 13, 'type': 'absent'},
+            {'day': 14, 'type': 'today'},
+            {'day': 15, 'type': 'future'},
+            {'day': 16, 'type': 'future'},
+            {'day': 17, 'type': 'future'},
+            {'day': 18, 'type': 'future'},
+          ]),
+          const SizedBox(height: 10.0),
+
+          // Row 4: April 19, 20, 21, 22, 23, 24, 25
+          _buildCalendarWeekRow([
+            {'day': 19, 'type': 'future'},
+            {'day': 20, 'type': 'future'},
+            {'day': 21, 'type': 'future'},
+            {'day': 22, 'type': 'future'},
+            {'day': 23, 'type': 'future'},
+            {'day': 24, 'type': 'future'},
+            {'day': 25, 'type': 'future'},
+          ]),
+          const SizedBox(height: 20.0),
+
+          // Legend Indicators
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _buildLegendItem(const Color(0xFFD30814), 'PRESENT'),
+              _buildLegendItem(const Color(0xFF6E6E73), 'ABSENT'),
+              _buildLegendItem(Colors.transparent, 'TODAY', outlineColor: const Color(0xFFD30814)),
+              _buildLegendItem(Colors.white10, 'FUTURE'),
+            ],
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCalendarWeekRow(List<Map<String, dynamic>> weekDays) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: weekDays.map((dayMap) {
+        final dayNum = dayMap['day'] as int;
+        final type = dayMap['type'] as String;
+
+        Widget dayWidget;
+        Color textColor = Colors.white;
+        Color circleBg = Colors.transparent;
+
+        if (type == 'prev') {
+          textColor = const Color(0xFF3A3A3C);
+          dayWidget = Column(
+            children: [
+              Text('$dayNum', style: TextStyle(color: textColor, fontSize: 13.0, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12.0),
+            ],
+          );
+        } else if (type == 'future') {
+          textColor = const Color(0xFF3A3A3C);
+          dayWidget = Column(
+            children: [
+              Text('$dayNum', style: TextStyle(color: textColor, fontSize: 13.0, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4.0),
+              Container(
+                width: 4.0,
+                height: 4.0,
+                decoration: const BoxDecoration(color: Color(0xFF3A3A3C), shape: BoxShape.circle),
+              ),
+              const SizedBox(height: 4.0),
+            ],
+          );
+        } else if (type == 'today') {
+          circleBg = const Color(0xFFD30814);
+          textColor = Colors.white;
+          dayWidget = Column(
+            children: [
+              Container(
+                width: 22.0,
+                height: 22.0,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(color: circleBg, shape: BoxShape.circle),
+                child: Text('$dayNum', style: TextStyle(color: textColor, fontSize: 11.5, fontWeight: FontWeight.w900)),
+              ),
+              const SizedBox(height: 12.0),
+            ],
+          );
+        } else {
+          // present or absent
+          textColor = const Color(0xFFD1D1D6);
+          final dotColor = type == 'present' ? const Color(0xFFD30814) : const Color(0xFF6E6E73);
+          dayWidget = Column(
+            children: [
+              Text('$dayNum', style: TextStyle(color: textColor, fontSize: 13.0, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4.0),
+              Container(
+                width: 4.0,
+                height: 4.0,
+                decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
+              ),
+              const SizedBox(height: 4.0),
+            ],
+          );
+        }
+
+        return Expanded(
+          child: Center(child: dayWidget),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildLegendItem(Color color, String label, {Color? outlineColor}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 8.0,
+          height: 8.0,
+          decoration: BoxDecoration(
+            color: outlineColor != null ? Colors.transparent : color,
+            shape: BoxShape.circle,
+            border: outlineColor != null ? Border.all(color: outlineColor, width: 1.5) : null,
+          ),
+        ),
+        const SizedBox(width: 6.0),
+        Text(
+          label,
+          style: const TextStyle(
+            color: Color(0xFF6E6E73),
+            fontSize: 8.5,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0.5,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPolicySection() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20.0),
+      decoration: BoxDecoration(
+        color: const Color(0xFF141416),
+        borderRadius: BorderRadius.circular(20.0),
+        border: Border.all(
+          color: Colors.white.withOpacity(0.04),
+          width: 1.0,
+        ),
+      ),
+      child: Column(
+        children: [
+          const CircleAvatar(
+            radius: 18.0,
+            backgroundColor: Color(0xFF280B0D),
+            child: Icon(Icons.info_outline_rounded, color: Color(0xFFD30814), size: 18.0),
+          ),
+          const SizedBox(height: 14.0),
+          const Text(
+            'Attendance Policy',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 14.5,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8.0),
+          const Text(
+            'Maintain above 90% attendance to stay eligible for the Mastermind Certification and 1-on-1 coaching sessions.',
+            style: TextStyle(
+              color: Color(0xFF8E8E93),
+              fontSize: 12.0,
+              height: 1.45,
+              fontWeight: FontWeight.w500,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 20.0),
+          SizedBox(
+            width: 110.0,
+            height: 38.0,
+            child: OutlinedButton(
+              onPressed: _showPolicyDialog,
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(color: Colors.white.withOpacity(0.12), width: 1.0),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.0)),
+                backgroundColor: const Color(0xFF1C1C1E),
+              ),
+              child: const Text(
+                'Read Policy',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          )
+        ],
       ),
     );
   }
