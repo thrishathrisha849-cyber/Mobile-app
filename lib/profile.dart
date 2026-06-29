@@ -604,8 +604,9 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     return Container(
       key: const ValueKey('card_front'),
       height: 220.0,
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24.0),
+        borderRadius: BorderRadius.circular(16.0),
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -822,8 +823,9 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     return Container(
       key: const ValueKey('card_back'),
       height: 220.0,
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24.0),
+        borderRadius: BorderRadius.circular(16.0),
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
