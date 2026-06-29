@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui';
 import 'dart:convert';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -16,6 +18,7 @@ import 'profile.dart';
 import 'podcast.dart';
 import 'courses.dart';
 import 'task.dart';
+import 'firebase_notification_service.dart';
 
 class SessionManager {
   static Future<File> _getSessionFile() async {
@@ -78,8 +81,13 @@ class SavedBooksManager {
   }
 }
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // ── Firebase initialization ──────────────────
+  await Firebase.initializeApp();
+  await FirebaseNotificationService.initialize();
+
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,

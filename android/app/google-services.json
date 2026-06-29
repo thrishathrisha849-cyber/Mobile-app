@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "893570262002",
+    "project_id": "mobile-app-d8c0f",
+    "storage_bucket": "mobile-app-d8c0f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:893570262002:android:130c43cd4aee945ee2016b",
+        "android_client_info": {
+          "package_name": "com.tbt.tbtmobileapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyClPoXeSSIhcCNINjGooqdXbh7EAVQRyZQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

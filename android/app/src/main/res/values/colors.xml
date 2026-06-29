@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- TBT brand red for FCM notification accent color -->
+    <color name="notification_color">#D30814</color>
+</resources>

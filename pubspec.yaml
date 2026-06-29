@@ -46,6 +46,8 @@ dependencies:
   qr: ^3.0.2
   custom_calender_picker: ^0.1.1
   table_calendar: ^3.2.0
+  firebase_core: ^3.15.2
+  firebase_messaging: ^15.2.10
 
 dependency_overrides:
   photo_manager: 3.8.2
