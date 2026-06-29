@@ -3947,19 +3947,20 @@ class QRPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     try {
       // Find the smallest QR Code version that can fit the data
-      QrCode? qrCode;
+      QrImage? qrImage;
       for (int type = 3; type <= 40; type++) {
         try {
           final qr = QrCode(type, QrErrorCorrectLevel.L);
           qr.addData(data);
-          qrCode = qr;
+          final img = QrImage(qr);
+          final _ = img.moduleCount; // Force compilation to trigger any too-long exception
+          qrImage = img;
           break;
         } catch (_) {}
       }
 
-      if (qrCode == null) return;
+      if (qrImage == null) return;
 
-      final qrImage = QrImage(qrCode);
       final double squareSize = size.width / qrImage.moduleCount;
       final paint = Paint()
         ..color = color
