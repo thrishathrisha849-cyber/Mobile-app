@@ -297,7 +297,7 @@ class _PodcastScreenState extends State<PodcastScreen> {
         ),
         title: Image.asset(
           'assets/images/TBT C Pvt Final logo-04.png',
-          height: 44.0,
+          height: 58.0,
           fit: BoxFit.contain,
         ),
         centerTitle: true,
@@ -1095,7 +1095,7 @@ class _PodcastDetailScreenState extends State<PodcastDetailScreen> {
           ),
           title: Image.asset(
             'assets/images/TBT C Pvt Final logo-04.png',
-            height: 44.0,
+            height: 58.0,
             fit: BoxFit.contain,
             errorBuilder: (context, error, stackTrace) => const Text(
               'Tamil Business Tribe',
@@ -1293,7 +1293,7 @@ class _PodcastDetailScreenState extends State<PodcastDetailScreen> {
                           children: [
                             Image.asset(
                               'assets/images/TBT C Pvt Final logo-04.png',
-                              height: 28.0,
+                              height: 42.0,
                               fit: BoxFit.contain,
                             ),
                             const SizedBox(height: 12.0),
