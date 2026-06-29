@@ -1,0 +1,8 @@
+name: native_glass_navbar
+description: Local mock package of native_glass_navbar to bypass SDK version constraints.
+version: 1.0.2
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
