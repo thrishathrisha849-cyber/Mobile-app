@@ -6,6 +6,7 @@ import 'package:lottie/lottie.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:qr/qr.dart';
 import 'main.dart';
 
 
@@ -864,7 +865,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                   ),
                   child: CustomPaint(
                     size: const Size(90, 90),
-                    painter: QRMockPainter(),
+                    painter: QRPainter('TBT Member: $_userName\nID: TBT-ELITE-4820\nCompany: $_companyName'),
                   ),
                 ),
                 const SizedBox(height: 12.0),
@@ -3935,55 +3936,54 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
   }
 }
 
-// Custom painter to generate a nice mock QR Code pattern inside the virtual card back
-class QRMockPainter extends CustomPainter {
+// Custom painter to generate a real QR Code inside the virtual card back
+class QRPainter extends CustomPainter {
+  final String data;
+  final Color color;
+
+  QRPainter(this.data, {this.color = Colors.black});
+
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.black
-      ..style = PaintingStyle.fill;
+    try {
+      // Find the smallest QR Code version that can fit the data
+      QrCode? qrCode;
+      for (int type = 3; type <= 40; type++) {
+        try {
+          final qr = QrCode(type, QrErrorCorrectLevel.L);
+          qr.addData(data);
+          qrCode = qr;
+          break;
+        } catch (_) {}
+      }
 
-    // Drawing the outer square anchors
-    void drawAnchor(double x, double y) {
-      canvas.drawRect(Rect.fromLTWH(x, y, 25, 25), paint);
-      canvas.drawRect(Rect.fromLTWH(x + 4, y + 4, 17, 17), Paint()..color = Colors.white);
-      canvas.drawRect(Rect.fromLTWH(x + 8, y + 8, 9, 9), paint);
-    }
+      if (qrCode == null) return;
 
-    drawAnchor(0, 0); // Top-left
-    drawAnchor(size.width - 25, 0); // Top-right
-    drawAnchor(0, size.height - 25); // Bottom-left
+      final qrImage = QrImage(qrCode);
+      final double squareSize = size.width / qrImage.moduleCount;
+      final paint = Paint()
+        ..color = color
+        ..style = PaintingStyle.fill;
 
-    // Draw some random pixels mockup inside the center/empty regions
-    final pixelPaint = Paint()
-      ..color = Colors.black
-      ..style = PaintingStyle.fill;
-
-    // Small alignment anchor bottom-right
-    canvas.drawRect(Rect.fromLTWH(size.width - 18, size.height - 18, 10, 10), pixelPaint);
-    canvas.drawRect(Rect.fromLTWH(size.width - 15, size.height - 15, 4, 4), Paint()..color = Colors.white);
-
-    // Mock patterns
-    final points = [
-      const Offset(35, 10), const Offset(40, 10), const Offset(45, 15), const Offset(55, 15),
-      const Offset(35, 25), const Offset(45, 25), const Offset(50, 30), const Offset(55, 30),
-      const Offset(10, 35), const Offset(15, 35), const Offset(20, 45), const Offset(25, 45),
-      const Offset(35, 35), const Offset(45, 35), const Offset(50, 45), const Offset(60, 45),
-      const Offset(65, 10), const Offset(70, 20), const Offset(75, 25), const Offset(80, 15),
-      const Offset(10, 65), const Offset(20, 65), const Offset(25, 70), const Offset(15, 75),
-      const Offset(35, 55), const Offset(40, 60), const Offset(45, 55), const Offset(50, 60),
-      const Offset(55, 55), const Offset(60, 60), const Offset(65, 55), const Offset(70, 60),
-      const Offset(35, 70), const Offset(40, 75), const Offset(45, 80), const Offset(50, 75),
-      const Offset(55, 70), const Offset(65, 75), const Offset(75, 70), const Offset(80, 80),
-    ];
-
-    for (var pt in points) {
-      canvas.drawRect(Rect.fromLTWH(pt.dx, pt.dy, 4, 4), pixelPaint);
+      for (int x = 0; x < qrImage.moduleCount; x++) {
+        for (int y = 0; y < qrImage.moduleCount; y++) {
+          if (qrImage.isDark(y, x)) {
+            canvas.drawRect(
+              Rect.fromLTWH(x * squareSize, y * squareSize, squareSize, squareSize),
+              paint,
+            );
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error painting QR Code: $e');
     }
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant QRPainter oldDelegate) {
+    return oldDelegate.data != data || oldDelegate.color != color;
+  }
 }
 
 class DashedBorderPainter extends CustomPainter {
