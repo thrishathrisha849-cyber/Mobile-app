@@ -7,7 +7,6 @@ import 'package:share_plus/share_plus.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:qr/qr.dart';
-import 'package:custom_calender_picker/custom_calender_picker.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'main.dart';
 
@@ -5556,14 +5555,6 @@ class AttendanceScreen extends StatefulWidget {
 }
 
 class _AttendanceScreenState extends State<AttendanceScreen> {
-  // Selected dates for the attendance calendar
-  List<DateTime> _selectedDates = [
-    DateTime(2026, 4, 1), DateTime(2026, 4, 2), DateTime(2026, 4, 3),
-    DateTime(2026, 4, 4), DateTime(2026, 4, 5), DateTime(2026, 4, 7),
-    DateTime(2026, 4, 8), DateTime(2026, 4, 9), DateTime(2026, 4, 10),
-    DateTime(2026, 4, 11), DateTime(2026, 4, 12), DateTime(2026, 4, 14),
-  ];
-
   // TableCalendar state
   DateTime _focusedDay = DateTime(2026, 4, 14);
   DateTime? _selectedDay;
@@ -5969,12 +5960,12 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Section header
+        // ── TableCalendar: Attendance Calendar ──
         Padding(
           padding: const EdgeInsets.only(bottom: 14.0),
           child: Row(
             children: const [
-              Icon(Icons.calendar_month_rounded, color: Color(0xFFD30814), size: 18.0),
+              Icon(Icons.event_available_rounded, color: Color(0xFFD30814), size: 18.0),
               SizedBox(width: 10.0),
               Text(
                 'Attendance Calendar',
@@ -5988,46 +5979,14 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           ),
         ),
         const Text(
-          'Tap dates to mark attendance',
+          'Tap a date to select • Red dot = Present • Grey dot = Absent',
           style: TextStyle(
             color: Color(0xFF8E8E93),
-            fontSize: 11.5,
+            fontSize: 11.0,
             fontWeight: FontWeight.w500,
           ),
         ),
         const SizedBox(height: 16.0),
-        // CustomCalenderPicker widget
-        CustomCalenderPicker(
-          returnDateType: ReturnDateType.list,
-          initialDateList: _selectedDates,
-          calenderThema: CalenderThema.dark,
-          selectedColor: const Color(0xFFD30814),
-          selectedFontColor: Colors.white,
-          buttonColor: const Color(0xFFD30814),
-          buttonTextColor: Colors.white,
-          buttonText: 'Save Attendance',
-          borderRadius: BorderRadius.circular(20.0),
-        ),
-        const SizedBox(height: 28.0),
-
-        // ── TableCalendar section ──
-        Padding(
-          padding: const EdgeInsets.only(bottom: 14.0),
-          child: Row(
-            children: const [
-              Icon(Icons.event_available_rounded, color: Color(0xFFD30814), size: 18.0),
-              SizedBox(width: 10.0),
-              Text(
-                'Monthly Overview',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 16.0,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-        ),
         Container(
           decoration: BoxDecoration(
             color: const Color(0xFF141416),
