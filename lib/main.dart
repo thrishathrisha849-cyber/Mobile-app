@@ -15,6 +15,7 @@ import 'community.dart';
 import 'profile.dart';
 import 'podcast.dart';
 import 'courses.dart';
+import 'task.dart';
 
 class SessionManager {
   static Future<File> _getSessionFile() async {
@@ -2116,17 +2117,36 @@ class _PostPopupScreenState extends State<PostPopupScreen> {
         const SizedBox(height: 14.0),
         FadeInSlideTransition(
           delay: const Duration(milliseconds: 400),
-          child: AnimatedGlassCard(
-            title: 'E-Book',
-            icon: Icons.menu_book_rounded,
-            color: const Color(0xFF38EF7D),
-            isFullWidth: true,
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const EBooksLibraryScreen()),
-              );
-            },
+          child: Row(
+            children: [
+              Expanded(
+                child: AnimatedGlassCard(
+                  title: 'E-Book',
+                  icon: Icons.menu_book_rounded,
+                  color: const Color(0xFF38EF7D),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const EBooksLibraryScreen()),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(width: 14.0),
+              Expanded(
+                child: AnimatedGlassCard(
+                  title: 'Task',
+                  icon: Icons.task_alt_rounded,
+                  color: const Color(0xFF2F80ED),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const TasksScreen()),
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
         ),
       ],
