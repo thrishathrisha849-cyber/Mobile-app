@@ -45,6 +45,7 @@ dependencies:
   video_player: ^2.9.5
   qr: ^3.0.2
   custom_calender_picker: ^0.1.1
+  table_calendar: ^3.2.0
 
 dependency_overrides:
   photo_manager: 3.8.2

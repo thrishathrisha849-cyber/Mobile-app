@@ -8,6 +8,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:qr/qr.dart';
 import 'package:custom_calender_picker/custom_calender_picker.dart';
+import 'package:table_calendar/table_calendar.dart';
 import 'main.dart';
 
 
@@ -5563,6 +5564,24 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     DateTime(2026, 4, 11), DateTime(2026, 4, 12), DateTime(2026, 4, 14),
   ];
 
+  // TableCalendar state
+  DateTime _focusedDay = DateTime(2026, 4, 14);
+  DateTime? _selectedDay;
+  final Set<DateTime> _presentDays = {
+    DateTime(2026, 4, 1), DateTime(2026, 4, 2), DateTime(2026, 4, 3),
+    DateTime(2026, 4, 4), DateTime(2026, 4, 5), DateTime(2026, 4, 7),
+    DateTime(2026, 4, 8), DateTime(2026, 4, 9), DateTime(2026, 4, 10),
+    DateTime(2026, 4, 11), DateTime(2026, 4, 12), DateTime(2026, 4, 14),
+  };
+  final Set<DateTime> _absentDays = {
+    DateTime(2026, 4, 6), DateTime(2026, 4, 13),
+  };
+
+  bool _isPresent(DateTime day) => _presentDays.any(
+      (d) => d.year == day.year && d.month == day.month && d.day == day.day);
+  bool _isAbsent(DateTime day) => _absentDays.any(
+      (d) => d.year == day.year && d.month == day.month && d.day == day.day);
+
   void _showPolicyDialog() {
     showDialog(
       context: context,
@@ -5988,6 +6007,205 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           buttonTextColor: Colors.white,
           buttonText: 'Save Attendance',
           borderRadius: BorderRadius.circular(20.0),
+        ),
+        const SizedBox(height: 28.0),
+
+        // ── TableCalendar section ──
+        Padding(
+          padding: const EdgeInsets.only(bottom: 14.0),
+          child: Row(
+            children: const [
+              Icon(Icons.event_available_rounded, color: Color(0xFFD30814), size: 18.0),
+              SizedBox(width: 10.0),
+              Text(
+                'Monthly Overview',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16.0,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFF141416),
+            borderRadius: BorderRadius.circular(20.0),
+            border: Border.all(
+              color: Colors.white.withOpacity(0.05),
+              width: 1.0,
+            ),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: TableCalendar(
+            firstDay: DateTime(2026, 1, 1),
+            lastDay: DateTime(2026, 12, 31),
+            focusedDay: _focusedDay,
+            selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+            onDaySelected: (selectedDay, focusedDay) {
+              setState(() {
+                _selectedDay = selectedDay;
+                _focusedDay = focusedDay;
+              });
+            },
+            onPageChanged: (focusedDay) {
+              setState(() => _focusedDay = focusedDay);
+            },
+            calendarFormat: CalendarFormat.month,
+            availableCalendarFormats: const {CalendarFormat.month: 'Month'},
+            startingDayOfWeek: StartingDayOfWeek.sunday,
+            headerStyle: HeaderStyle(
+              formatButtonVisible: false,
+              titleCentered: true,
+              leftChevronIcon: const Icon(Icons.chevron_left_rounded, color: Colors.white70, size: 22.0),
+              rightChevronIcon: const Icon(Icons.chevron_right_rounded, color: Colors.white70, size: 22.0),
+              titleTextStyle: const TextStyle(
+                color: Colors.white,
+                fontSize: 16.0,
+                fontWeight: FontWeight.bold,
+              ),
+              headerPadding: const EdgeInsets.symmetric(vertical: 14.0),
+              decoration: const BoxDecoration(
+                color: Color(0xFF1C1C1E),
+              ),
+            ),
+            daysOfWeekStyle: const DaysOfWeekStyle(
+              weekdayStyle: TextStyle(color: Color(0xFF8E8E93), fontSize: 12.0, fontWeight: FontWeight.bold),
+              weekendStyle: TextStyle(color: Color(0xFFD30814), fontSize: 12.0, fontWeight: FontWeight.bold),
+            ),
+            calendarStyle: CalendarStyle(
+              outsideDaysVisible: false,
+              defaultTextStyle: const TextStyle(color: Colors.white70, fontSize: 13.0),
+              weekendTextStyle: const TextStyle(color: Color(0xFFD30814), fontSize: 13.0),
+              todayDecoration: BoxDecoration(
+                color: const Color(0xFFD30814).withOpacity(0.25),
+                shape: BoxShape.circle,
+                border: Border.all(color: const Color(0xFFD30814), width: 1.5),
+              ),
+              todayTextStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              selectedDecoration: const BoxDecoration(
+                color: Color(0xFFD30814),
+                shape: BoxShape.circle,
+              ),
+              selectedTextStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              markerDecoration: const BoxDecoration(
+                color: Colors.transparent,
+                shape: BoxShape.circle,
+              ),
+              cellMargin: const EdgeInsets.all(5.0),
+            ),
+            calendarBuilders: CalendarBuilders(
+              defaultBuilder: (context, day, focusedDay) {
+                if (_isPresent(day)) {
+                  return Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        width: 32.0,
+                        height: 32.0,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFD30814).withOpacity(0.18),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(
+                          '${day.day}',
+                          style: const TextStyle(color: Colors.white, fontSize: 13.0, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      const SizedBox(height: 2.0),
+                      Container(width: 5.0, height: 5.0, decoration: const BoxDecoration(color: Color(0xFFD30814), shape: BoxShape.circle)),
+                    ],
+                  );
+                } else if (_isAbsent(day)) {
+                  return Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        width: 32.0,
+                        height: 32.0,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.05),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(
+                          '${day.day}',
+                          style: const TextStyle(color: Color(0xFF8E8E93), fontSize: 13.0),
+                        ),
+                      ),
+                      const SizedBox(height: 2.0),
+                      Container(width: 5.0, height: 5.0, decoration: const BoxDecoration(color: Color(0xFF6E6E73), shape: BoxShape.circle)),
+                    ],
+                  );
+                }
+                return null;
+              },
+            ),
+          ),
+        ),
+        const SizedBox(height: 16.0),
+        // Legend row
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _buildTableLegend(const Color(0xFFD30814), 'PRESENT'),
+            const SizedBox(width: 24.0),
+            _buildTableLegend(const Color(0xFF6E6E73), 'ABSENT'),
+            const SizedBox(width: 24.0),
+            _buildTableLegendToday(),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTableLegend(Color dotColor, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 8.0,
+          height: 8.0,
+          decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 6.0),
+        Text(
+          label,
+          style: const TextStyle(
+            color: Color(0xFF8E8E93),
+            fontSize: 10.0,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 0.5,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTableLegendToday() {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 8.0,
+          height: 8.0,
+          decoration: BoxDecoration(
+            color: Colors.transparent,
+            shape: BoxShape.circle,
+            border: Border.all(color: const Color(0xFFD30814), width: 1.5),
+          ),
+        ),
+        const SizedBox(width: 6.0),
+        const Text(
+          'TODAY',
+          style: TextStyle(
+            color: Color(0xFF8E8E93),
+            fontSize: 10.0,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 0.5,
+          ),
         ),
       ],
     );
