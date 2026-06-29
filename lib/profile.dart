@@ -7,6 +7,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:qr/qr.dart';
+import 'package:custom_calender_picker/custom_calender_picker.dart';
 import 'main.dart';
 
 
@@ -5554,8 +5555,13 @@ class AttendanceScreen extends StatefulWidget {
 }
 
 class _AttendanceScreenState extends State<AttendanceScreen> {
-  final String _monthYear = 'April 2026';
-  final List<String> _daysOfWeek = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+  // Selected dates for the attendance calendar
+  List<DateTime> _selectedDates = [
+    DateTime(2026, 4, 1), DateTime(2026, 4, 2), DateTime(2026, 4, 3),
+    DateTime(2026, 4, 4), DateTime(2026, 4, 5), DateTime(2026, 4, 7),
+    DateTime(2026, 4, 8), DateTime(2026, 4, 9), DateTime(2026, 4, 10),
+    DateTime(2026, 4, 11), DateTime(2026, 4, 12), DateTime(2026, 4, 14),
+  ];
 
   void _showPolicyDialog() {
     showDialog(
@@ -5941,237 +5947,47 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   }
 
   Widget _buildMonthlyCalendar() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20.0),
-      decoration: BoxDecoration(
-        color: const Color(0xFF141416),
-        borderRadius: BorderRadius.circular(20.0),
-        border: Border.all(
-          color: Colors.white.withOpacity(0.04),
-          width: 1.0,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Month navigation header
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _monthYear,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16.5,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 2.0),
-                  const Text(
-                    'Monthly attendance performance',
-                    style: TextStyle(
-                      color: Color(0xFF8E8E93),
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-              Row(
-                children: const [
-                  Icon(Icons.chevron_left_rounded, color: Color(0xFF8E8E93), size: 22.0),
-                  SizedBox(width: 8.0),
-                  Icon(Icons.calendar_month_rounded, color: Color(0xFFD30814), size: 18.0),
-                  SizedBox(width: 8.0),
-                  Icon(Icons.chevron_right_rounded, color: Color(0xFF8E8E93), size: 22.0),
-                ],
-              )
-            ],
-          ),
-          const SizedBox(height: 24.0),
-
-          // Days of Week Header
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: _daysOfWeek.map((day) {
-              return Expanded(
-                child: Text(
-                  day,
-                  style: const TextStyle(
-                    color: Color(0xFF6E6E73),
-                    fontSize: 9.5,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 14.0),
-
-          // Calendar Days Grid (Hardcoded for April 2026 starting Wed)
-          // Row 1: March 29, 30, 31 (greyed), April 1, 2, 3, 4
-          _buildCalendarWeekRow([
-            {'day': 29, 'type': 'prev'},
-            {'day': 30, 'type': 'prev'},
-            {'day': 31, 'type': 'prev'},
-            {'day': 1, 'type': 'present'},
-            {'day': 2, 'type': 'present'},
-            {'day': 3, 'type': 'present'},
-            {'day': 4, 'type': 'present'},
-          ]),
-          const SizedBox(height: 10.0),
-
-          // Row 2: April 5, 6, 7, 8, 9, 10, 11
-          _buildCalendarWeekRow([
-            {'day': 5, 'type': 'present'},
-            {'day': 6, 'type': 'absent'},
-            {'day': 7, 'type': 'present'},
-            {'day': 8, 'type': 'present'},
-            {'day': 9, 'type': 'present'},
-            {'day': 10, 'type': 'present'},
-            {'day': 11, 'type': 'present'},
-          ]),
-          const SizedBox(height: 10.0),
-
-          // Row 3: April 12, 13, 14, 15, 16, 17, 18
-          _buildCalendarWeekRow([
-            {'day': 12, 'type': 'present'},
-            {'day': 13, 'type': 'absent'},
-            {'day': 14, 'type': 'today'},
-            {'day': 15, 'type': 'future'},
-            {'day': 16, 'type': 'future'},
-            {'day': 17, 'type': 'future'},
-            {'day': 18, 'type': 'future'},
-          ]),
-          const SizedBox(height: 10.0),
-
-          // Row 4: April 19, 20, 21, 22, 23, 24, 25
-          _buildCalendarWeekRow([
-            {'day': 19, 'type': 'future'},
-            {'day': 20, 'type': 'future'},
-            {'day': 21, 'type': 'future'},
-            {'day': 22, 'type': 'future'},
-            {'day': 23, 'type': 'future'},
-            {'day': 24, 'type': 'future'},
-            {'day': 25, 'type': 'future'},
-          ]),
-          const SizedBox(height: 20.0),
-
-          // Legend Indicators
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _buildLegendItem(const Color(0xFFD30814), 'PRESENT'),
-              _buildLegendItem(const Color(0xFF6E6E73), 'ABSENT'),
-              _buildLegendItem(Colors.transparent, 'TODAY', outlineColor: const Color(0xFFD30814)),
-              _buildLegendItem(Colors.white10, 'FUTURE'),
-            ],
-          )
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCalendarWeekRow(List<Map<String, dynamic>> weekDays) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: weekDays.map((dayMap) {
-        final dayNum = dayMap['day'] as int;
-        final type = dayMap['type'] as String;
-
-        Widget dayWidget;
-        Color textColor = Colors.white;
-        Color circleBg = Colors.transparent;
-
-        if (type == 'prev') {
-          textColor = const Color(0xFF3A3A3C);
-          dayWidget = Column(
-            children: [
-              Text('$dayNum', style: TextStyle(color: textColor, fontSize: 13.0, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 12.0),
-            ],
-          );
-        } else if (type == 'future') {
-          textColor = const Color(0xFF3A3A3C);
-          dayWidget = Column(
-            children: [
-              Text('$dayNum', style: TextStyle(color: textColor, fontSize: 13.0, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4.0),
-              Container(
-                width: 4.0,
-                height: 4.0,
-                decoration: const BoxDecoration(color: Color(0xFF3A3A3C), shape: BoxShape.circle),
-              ),
-              const SizedBox(height: 4.0),
-            ],
-          );
-        } else if (type == 'today') {
-          circleBg = const Color(0xFFD30814);
-          textColor = Colors.white;
-          dayWidget = Column(
-            children: [
-              Container(
-                width: 22.0,
-                height: 22.0,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(color: circleBg, shape: BoxShape.circle),
-                child: Text('$dayNum', style: TextStyle(color: textColor, fontSize: 11.5, fontWeight: FontWeight.w900)),
-              ),
-              const SizedBox(height: 12.0),
-            ],
-          );
-        } else {
-          // present or absent
-          textColor = const Color(0xFFD1D1D6);
-          final dotColor = type == 'present' ? const Color(0xFFD30814) : const Color(0xFF6E6E73);
-          dayWidget = Column(
-            children: [
-              Text('$dayNum', style: TextStyle(color: textColor, fontSize: 13.0, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4.0),
-              Container(
-                width: 4.0,
-                height: 4.0,
-                decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
-              ),
-              const SizedBox(height: 4.0),
-            ],
-          );
-        }
-
-        return Expanded(
-          child: Center(child: dayWidget),
-        );
-      }).toList(),
-    );
-  }
-
-  Widget _buildLegendItem(Color color, String label, {Color? outlineColor}) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          width: 8.0,
-          height: 8.0,
-          decoration: BoxDecoration(
-            color: outlineColor != null ? Colors.transparent : color,
-            shape: BoxShape.circle,
-            border: outlineColor != null ? Border.all(color: outlineColor, width: 1.5) : null,
+        // Section header
+        Padding(
+          padding: const EdgeInsets.only(bottom: 14.0),
+          child: Row(
+            children: const [
+              Icon(Icons.calendar_month_rounded, color: Color(0xFFD30814), size: 18.0),
+              SizedBox(width: 10.0),
+              Text(
+                'Attendance Calendar',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16.0,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
           ),
         ),
-        const SizedBox(width: 6.0),
-        Text(
-          label,
-          style: const TextStyle(
-            color: Color(0xFF6E6E73),
-            fontSize: 8.5,
-            fontWeight: FontWeight.w900,
-            letterSpacing: 0.5,
+        const Text(
+          'Tap dates to mark attendance',
+          style: TextStyle(
+            color: Color(0xFF8E8E93),
+            fontSize: 11.5,
+            fontWeight: FontWeight.w500,
           ),
+        ),
+        const SizedBox(height: 16.0),
+        // CustomCalenderPicker widget
+        CustomCalenderPicker(
+          returnDateType: ReturnDateType.list,
+          initialDateList: _selectedDates,
+          calenderThema: CalenderThema.dark,
+          selectedColor: const Color(0xFFD30814),
+          selectedFontColor: Colors.white,
+          buttonColor: const Color(0xFFD30814),
+          buttonTextColor: Colors.white,
+          buttonText: 'Save Attendance',
+          borderRadius: BorderRadius.circular(20.0),
         ),
       ],
     );
