@@ -1349,6 +1349,8 @@ class _TaskDetailsScreenState extends State<TaskDetailsScreen> {
         _taskDetails['isCompleted'] = true;
       });
 
+      if (!mounted) return;
+
       // Show success dialog
       showDialog(
         context: context,
@@ -1382,6 +1384,106 @@ class _TaskDetailsScreenState extends State<TaskDetailsScreen> {
         _isSubmitting = false;
       });
       debugPrint('Error submitting task: $e');
+    }
+  }
+
+  void _markAsAlreadyCompleted() async {
+    if (_taskDetails['isCompleted']) return;
+
+    setState(() {
+      _isSubmitting = true;
+    });
+
+    try {
+      if (!mounted) return;
+
+      // 1. Mark task completed in 90-day task list
+      _allTasks[widget.taskIndex]['isCompleted'] = true;
+      final file = await _getTasksFile();
+      await file.writeAsString(json.encode(_allTasks));
+
+      // 2. Load points file and update total points & completed task count
+      final pointsFile = await _getPointsFile();
+      int currentPoints = 4820;
+      int currentCompleted = 40;
+      double progressPercentage = 47.8;
+      int dayCount = 43;
+      Map<String, dynamic> pointsData = {};
+
+      if (await pointsFile.exists()) {
+        final content = await pointsFile.readAsString();
+        pointsData = Map<String, dynamic>.from(json.decode(content));
+        currentPoints = pointsData['totalPoints'] ?? 4820;
+        currentCompleted = pointsData['tasksCompleted'] ?? 40;
+        progressPercentage = pointsData['progressPercentage'] ?? 47.8;
+        dayCount = pointsData['dayCount'] ?? 43;
+      }
+
+      currentPoints += (_taskDetails['points'] as int);
+      currentCompleted += 1;
+      progressPercentage = double.parse((progressPercentage + 1.2).toStringAsFixed(1));
+      dayCount += 1;
+
+      pointsData['totalPoints'] = currentPoints;
+      pointsData['tasksCompleted'] = currentCompleted;
+      pointsData['progressPercentage'] = progressPercentage;
+      pointsData['dayCount'] = dayCount;
+
+      // Add to achievements list
+      List<dynamic> achievements = pointsData['achievements'] != null
+          ? List.from(pointsData['achievements'])
+          : [];
+      achievements.insert(0, {
+        'day': _taskDetails['day'],
+        'title': _taskDetails['title'],
+        'time': 'Completed just now',
+      });
+      pointsData['achievements'] = achievements;
+
+      await pointsFile.writeAsString(json.encode(pointsData));
+
+      widget.onTaskCompleted();
+
+      setState(() {
+        _isSubmitting = false;
+        _taskDetails['isCompleted'] = true;
+      });
+
+      if (!mounted) return;
+
+      // Show success dialog
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: const Color(0xFF1C1C1E),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20.0)),
+          title: const Row(
+            children: [
+              Icon(Icons.check_circle_rounded, color: Color(0xFF27AE60), size: 28.0),
+              SizedBox(width: 10.0),
+              Text('Task Completed!', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: Text(
+            'Success! Task marked as completed. Earned +${_taskDetails['points']} TBT Points! 🎉',
+            style: const TextStyle(color: Color(0xFFD1D1D6)),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context); // Close dialog
+                Navigator.pop(context); // Pop back to NinetyDayTasksScreen
+              },
+              child: const Text('Perfect', style: TextStyle(color: Color(0xFFD30814), fontWeight: FontWeight.bold)),
+            )
+          ],
+        ),
+      );
+    } catch (e) {
+      setState(() {
+        _isSubmitting = false;
+      });
+      debugPrint('Error marking task as completed: $e');
     }
   }
 
@@ -1735,6 +1837,24 @@ class _TaskDetailsScreenState extends State<TaskDetailsScreen> {
                                         letterSpacing: 0.5,
                                       ),
                                     ),
+                            ),
+                          ),
+                          const SizedBox(height: 16.0),
+                          Center(
+                            child: TextButton(
+                              onPressed: _isSubmitting ? null : _markAsAlreadyCompleted,
+                              style: TextButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                              ),
+                              child: const Text(
+                                'MARK AS ALREADY COMPLETED',
+                                style: TextStyle(
+                                  color: Colors.white38,
+                                  fontSize: 10.0,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
                             ),
                           ),
                         ],
