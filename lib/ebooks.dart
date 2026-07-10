@@ -405,6 +405,14 @@ class _EBooksLibraryScreenState extends State<EBooksLibraryScreen> {
   List<Map<String, dynamic>> _library = [];
   Map<String, dynamic>? _banner;
 
+  // When a category/author chip other than "All" is selected, this holds
+  // every active book in that category (fetched via the same DB-backed
+  // fetchBooks query AllBooksCatalogScreen uses) — not just the user's
+  // bookmarked "Your Library" items, since that list is usually empty and
+  // was the reason the chips looked broken.
+  List<Map<String, dynamic>>? _catalogResults;
+  bool _catalogLoading = false;
+
   bool _isSearching = false;
   String _searchQuery = '';
 
@@ -412,6 +420,16 @@ class _EBooksLibraryScreenState extends State<EBooksLibraryScreen> {
   void initState() {
     super.initState();
     _loadAll();
+    _initProfileImage();
+  }
+
+  // Ensures the top-right avatar shows the real logged-in profile photo
+  // even if this page is opened before Profile has ever loaded it — reuses
+  // the same shared loader/field every other screen's avatar reads, rather
+  // than assuming it was already populated elsewhere first.
+  Future<void> _initProfileImage() async {
+    await ProfileScreen.ensureProfileImageLoaded();
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadAll() async {
@@ -450,6 +468,44 @@ class _EBooksLibraryScreenState extends State<EBooksLibraryScreen> {
     if (userId == null) return;
     await EBookService.instance.toggleBookmark(userId, bookId);
     await _loadAll();
+    if (_selectedCategoryId != null) await _refreshCatalogResults();
+  }
+
+  Future<void> _onCategorySelected(String? categoryId) async {
+    setState(() => _selectedCategoryId = categoryId);
+    await _refreshCatalogResults();
+  }
+
+  Future<void> _refreshCatalogResults() async {
+    if (_selectedCategoryId == null) {
+      if (mounted) setState(() => _catalogResults = null);
+      return;
+    }
+    setState(() => _catalogLoading = true);
+    try {
+      final books = await EBookService.instance.fetchBooks(
+        categoryId: _selectedCategoryId,
+        search: _searchQuery,
+        limit: 50,
+      );
+      final bookmarkedIds = _library
+          .where((b) => b['isBookmarked'] == true)
+          .map((b) => b['id'])
+          .toSet();
+      if (!mounted) return;
+      setState(() {
+        _catalogResults = books
+            .map((b) => {...b, 'isBookmarked': bookmarkedIds.contains(b['id'])})
+            .toList();
+        _catalogLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _catalogResults = [];
+        _catalogLoading = false;
+      });
+    }
   }
 
   void _openDetails(Map<String, dynamic> book) {
@@ -470,13 +526,7 @@ class _EBooksLibraryScreenState extends State<EBooksLibraryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final filteredFeatured = _featured
-        .where((b) => (b['title'] as String? ?? '')
-            .toLowerCase()
-            .contains(_searchQuery.toLowerCase()))
-        .toList();
-
-    final filteredLibrary = _library.where((b) {
+    final filteredFeatured = _featured.where((b) {
       final matchesSearch = (b['title'] as String? ?? '')
           .toLowerCase()
           .contains(_searchQuery.toLowerCase());
@@ -484,6 +534,31 @@ class _EBooksLibraryScreenState extends State<EBooksLibraryScreen> {
           _selectedCategoryId == null || b['categoryId'] == _selectedCategoryId;
       return matchesSearch && matchesCategory;
     }).toList();
+
+    // "All" selected → the user's own bookmarked/in-progress library, as
+    // before. A specific chip selected → every active book in that
+    // category/author from the database (see _refreshCatalogResults), since
+    // the personal library is usually empty and isn't what the chips should
+    // be filtering.
+    final displayedBooks = _selectedCategoryId != null
+        ? (_catalogResults ?? const <Map<String, dynamic>>[])
+        : _library
+            .where((b) => (b['title'] as String? ?? '')
+                .toLowerCase()
+                .contains(_searchQuery.toLowerCase()))
+            .toList();
+
+    final String selectedCategoryName = _selectedCategoryId == null
+        ? ''
+        : _categories
+            .firstWhere((c) => c['id'] == _selectedCategoryId,
+                orElse: () => const {'name': ''})['name'] as String;
+
+    final String sectionTitle = _searchQuery.isNotEmpty
+        ? 'Search Results'
+        : (_selectedCategoryId != null && selectedCategoryName.isNotEmpty)
+            ? '$selectedCategoryName Books'
+            : 'Your Library';
 
     return Scaffold(
       backgroundColor: context.scaffoldBg,
@@ -517,7 +592,10 @@ class _EBooksLibraryScreenState extends State<EBooksLibraryScreen> {
                     contentPadding: const EdgeInsets.symmetric(vertical: 10.0),
                   ),
                   autofocus: true,
-                  onChanged: (val) => setState(() => _searchQuery = val),
+                  onChanged: (val) {
+                    setState(() => _searchQuery = val);
+                    if (_selectedCategoryId != null) _refreshCatalogResults();
+                  },
                 ),
               )
             : Text('e-books',
@@ -681,16 +759,14 @@ class _EBooksLibraryScreenState extends State<EBooksLibraryScreen> {
                                       context,
                                       'All',
                                       _selectedCategoryId == null,
-                                      () => setState(
-                                          () => _selectedCategoryId = null)),
+                                      () => _onCategorySelected(null)),
                                   ..._categories
                                       .map((cat) => buildEbookCategoryChip(
                                             context,
                                             cat['name'] as String,
                                             _selectedCategoryId == cat['id'],
-                                            () => setState(() =>
-                                                _selectedCategoryId =
-                                                    cat['id'] as String),
+                                            () => _onCategorySelected(
+                                                cat['id'] as String),
                                           )),
                                 ],
                               ),
@@ -699,9 +775,7 @@ class _EBooksLibraryScreenState extends State<EBooksLibraryScreen> {
                             Row(
                               children: [
                                 Text(
-                                  _searchQuery.isNotEmpty
-                                      ? 'Search Results'
-                                      : 'Your Library',
+                                  sectionTitle,
                                   style: TextStyle(
                                       color: context.textColor,
                                       fontSize: 16.5,
@@ -718,7 +792,7 @@ class _EBooksLibraryScreenState extends State<EBooksLibraryScreen> {
                                     borderRadius: BorderRadius.circular(10.0),
                                   ),
                                   child: Text(
-                                    '${filteredLibrary.length} Books',
+                                    '${displayedBooks.length} Books',
                                     style: TextStyle(
                                         color: context.subTextColor,
                                         fontSize: 9.5,
@@ -728,15 +802,22 @@ class _EBooksLibraryScreenState extends State<EBooksLibraryScreen> {
                               ],
                             ),
                             const SizedBox(height: 16.0),
-                            if (filteredLibrary.isEmpty)
+                            if (_selectedCategoryId != null && _catalogLoading)
+                              const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 24.0),
+                                child: Center(
+                                    child: CircularProgressIndicator(
+                                        color: _kEbookRed)),
+                              )
+                            else if (displayedBooks.isEmpty)
                               buildEbookEmptyState(context, 'No books found')
                             else
                               ListView.builder(
                                 shrinkWrap: true,
                                 physics: const NeverScrollableScrollPhysics(),
-                                itemCount: filteredLibrary.length,
+                                itemCount: displayedBooks.length,
                                 itemBuilder: (context, index) {
-                                  final book = filteredLibrary[index];
+                                  final book = displayedBooks[index];
                                   return buildLibraryRow(
                                     context,
                                     book,

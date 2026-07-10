@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
+import 'main.dart';
+import 'tbt_points_service.dart';
 
 class TasksScreen extends StatefulWidget {
   const TasksScreen({super.key});
@@ -198,6 +200,10 @@ class _TasksScreenState extends State<TasksScreen> {
       });
 
       _saveState();
+      TbtPointsService.instance.logActivity(
+        points: currentSpotlight['reward'] as int,
+        source: 'spotlight_submission',
+      );
 
       // Show success dialog
       showDialog(
@@ -214,7 +220,7 @@ class _TasksScreenState extends State<TasksScreen> {
           ),
           content: Text(
             'Congratulations! You have completed the task and earned +${currentSpotlight['reward']} TBT Points! 🎉',
-            style: const TextStyle(color: Color(0xFFD1D1D6)),
+            style: TextStyle(color: context.textColor),
           ),
           actions: [
             TextButton(
@@ -241,8 +247,11 @@ class _TasksScreenState extends State<TasksScreen> {
       },
     );
 
+    final isDark = context.isDark;
+    final textColor = context.textColor;
+
     return Scaffold(
-      backgroundColor: const Color(0xFF050505),
+      backgroundColor: isDark ? const Color(0xFF050505) : const Color(0xFFF5F5F5),
       body: SafeArea(
         child: SingleChildScrollView(
           physics: const BouncingScrollPhysics(),
@@ -255,7 +264,7 @@ class _TasksScreenState extends State<TasksScreen> {
                 children: [
                   // Back Button & Navigation
                   IconButton(
-                    icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20.0),
+                    icon: Icon(Icons.arrow_back_ios_new_rounded, color: textColor, size: 20.0),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                     onPressed: () => Navigator.pop(context),
@@ -263,20 +272,20 @@ class _TasksScreenState extends State<TasksScreen> {
                   const SizedBox(height: 16.0),
 
                   // Header Greetings
-                  const Text(
+                  Text(
                     'GOOD MORNING',
                     style: TextStyle(
-                      color: Color(0xFF8E8E93),
+                      color: isDark ? const Color(0xFF8E8E93) : const Color(0xFF555555),
                       fontSize: 10.0,
                       fontWeight: FontWeight.w900,
                       letterSpacing: 1.5,
                     ),
                   ),
                   const SizedBox(height: 4.0),
-                  const Text(
+                  Text(
                     'Hi Arjun S.',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: textColor,
                       fontSize: 26.0,
                       fontWeight: FontWeight.w900,
                       letterSpacing: -0.5,
@@ -360,10 +369,10 @@ class _TasksScreenState extends State<TasksScreen> {
         width: double.infinity,
         padding: const EdgeInsets.all(24.0),
         decoration: BoxDecoration(
-          color: const Color(0xFF141416),
+          color: context.cardBg,
           borderRadius: BorderRadius.circular(24.0),
           border: Border.all(
-            color: Colors.white.withOpacity(0.05),
+            color: context.borderCol,
             width: 1.0,
           ),
         ),
@@ -403,8 +412,8 @@ class _TasksScreenState extends State<TasksScreen> {
                           children: [
                             TextSpan(
                               text: 'Day $_dayCount ',
-                              style: const TextStyle(
-                                color: Colors.white,
+                              style: TextStyle(
+                                color: context.textColor,
                                 fontSize: 22.0,
                                 fontWeight: FontWeight.w900,
                               ),
@@ -449,8 +458,8 @@ class _TasksScreenState extends State<TasksScreen> {
                     ),
                     Text(
                       '$_progressPercentage%',
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: context.textColor,
                         fontSize: 13.5,
                         fontWeight: FontWeight.w900,
                       ),
@@ -504,10 +513,10 @@ class _TasksScreenState extends State<TasksScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 14.0, horizontal: 8.0),
       decoration: BoxDecoration(
-        color: const Color(0xFF141416),
+        color: context.cardBg,
         borderRadius: BorderRadius.circular(16.0),
         border: Border.all(
-          color: Colors.white.withOpacity(0.04),
+          color: context.borderCol,
           width: 1.0,
         ),
       ),
@@ -544,10 +553,10 @@ class _TasksScreenState extends State<TasksScreen> {
       width: double.infinity,
       padding: const EdgeInsets.all(20.0),
       decoration: BoxDecoration(
-        color: const Color(0xFF141416),
+        color: context.cardBg,
         borderRadius: BorderRadius.circular(24.0),
         border: Border.all(
-          color: Colors.white.withOpacity(0.05),
+          color: context.borderCol,
           width: 1.0,
         ),
       ),
@@ -586,8 +595,8 @@ class _TasksScreenState extends State<TasksScreen> {
           const SizedBox(height: 16.0),
           Text(
             spotlight['title'],
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: context.textColor,
               fontSize: 16.0,
               fontWeight: FontWeight.w900,
             ),
@@ -611,10 +620,10 @@ class _TasksScreenState extends State<TasksScreen> {
               width: double.infinity,
               padding: const EdgeInsets.all(16.0),
               decoration: BoxDecoration(
-                color: const Color(0xFF1C1C1E),
+                color: context.isDark ? const Color(0xFF1C1C1E) : const Color(0xFFE5E5EA),
                 borderRadius: BorderRadius.circular(16.0),
                 border: Border.all(
-                  color: Colors.white.withOpacity(0.08),
+                  color: context.borderCol,
                   width: 1.0,
                 ),
               ),
@@ -622,14 +631,14 @@ class _TasksScreenState extends State<TasksScreen> {
                 children: [
                   Icon(
                     _selectedFileName != null ? Icons.insert_drive_file_rounded : Icons.cloud_upload_outlined,
-                    color: _selectedFileName != null ? const Color(0xFF27AE60) : Colors.white38,
+                    color: _selectedFileName != null ? const Color(0xFF27AE60) : (context.isDark ? Colors.white38 : Colors.black38),
                     size: 24.0,
                   ),
                   const SizedBox(height: 8.0),
                   Text(
                     _selectedFileName ?? 'UPLOAD REQUIRED',
                     style: TextStyle(
-                      color: _selectedFileName != null ? Colors.white : Colors.white38,
+                      color: _selectedFileName != null ? context.textColor : (context.isDark ? Colors.white38 : Colors.black38),
                       fontSize: 10.0,
                       fontWeight: FontWeight.bold,
                       letterSpacing: 0.5,
@@ -691,10 +700,10 @@ class _TasksScreenState extends State<TasksScreen> {
       margin: const EdgeInsets.only(bottom: 12.0),
       padding: const EdgeInsets.all(16.0),
       decoration: BoxDecoration(
-        color: const Color(0xFF141416),
+        color: context.cardBg,
         borderRadius: BorderRadius.circular(16.0),
         border: Border.all(
-          color: Colors.white.withOpacity(0.03),
+          color: context.borderCol,
           width: 1.0,
         ),
       ),
@@ -722,8 +731,8 @@ class _TasksScreenState extends State<TasksScreen> {
               children: [
                 Text(
                   item['title'],
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: context.textColor,
                     fontSize: 13.5,
                     fontWeight: FontWeight.bold,
                   ),
@@ -919,13 +928,16 @@ class _NinetyDayTasksScreenState extends State<NinetyDayTasksScreen> {
       return task['step'] == stepNum;
     }).toList();
 
+    final isDark = context.isDark;
+    final textColor = context.textColor;
+
     return Scaffold(
-      backgroundColor: const Color(0xFF050505),
+      backgroundColor: isDark ? const Color(0xFF050505) : const Color(0xFFF5F5F5),
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0.0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20.0),
+          icon: Icon(Icons.arrow_back_ios_new_rounded, color: textColor, size: 20.0),
           onPressed: () => Navigator.pop(context),
         ),
       ),
@@ -1341,6 +1353,10 @@ class _TaskDetailsScreenState extends State<TaskDetailsScreen> {
       pointsData['achievements'] = achievements;
 
       await pointsFile.writeAsString(json.encode(pointsData));
+      TbtPointsService.instance.logActivity(
+        points: _taskDetails['points'] as int,
+        source: 'task_completion',
+      );
 
       widget.onTaskCompleted();
 
@@ -1366,7 +1382,7 @@ class _TaskDetailsScreenState extends State<TaskDetailsScreen> {
           ),
           content: Text(
             'Success! Task submitted. Earned +${_taskDetails['points']} TBT Points! 🎉',
-            style: const TextStyle(color: Color(0xFFD1D1D6)),
+            style: TextStyle(color: context.textColor),
           ),
           actions: [
             TextButton(
@@ -1441,6 +1457,10 @@ class _TaskDetailsScreenState extends State<TaskDetailsScreen> {
       pointsData['achievements'] = achievements;
 
       await pointsFile.writeAsString(json.encode(pointsData));
+      TbtPointsService.instance.logActivity(
+        points: _taskDetails['points'] as int,
+        source: 'task_completion',
+      );
 
       widget.onTaskCompleted();
 
@@ -1466,7 +1486,7 @@ class _TaskDetailsScreenState extends State<TaskDetailsScreen> {
           ),
           content: Text(
             'Success! Task marked as completed. Earned +${_taskDetails['points']} TBT Points! 🎉',
-            style: const TextStyle(color: Color(0xFFD1D1D6)),
+            style: TextStyle(color: context.textColor),
           ),
           actions: [
             TextButton(
@@ -1540,13 +1560,16 @@ class _TaskDetailsScreenState extends State<TaskDetailsScreen> {
       }
     }
 
+    final isDark = context.isDark;
+    final textColor = context.textColor;
+
     return Scaffold(
-      backgroundColor: const Color(0xFF050505),
+      backgroundColor: isDark ? const Color(0xFF050505) : const Color(0xFFF5F5F5),
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0.0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20.0),
+          icon: Icon(Icons.arrow_back_ios_new_rounded, color: textColor, size: 20.0),
           onPressed: () => Navigator.pop(context),
         ),
       ),
@@ -1716,8 +1739,8 @@ class _TaskDetailsScreenState extends State<TaskDetailsScreen> {
                                   Expanded(
                                     child: Text(
                                       item.toString(),
-                                      style: const TextStyle(
-                                        color: Color(0xFFD1D1D6),
+                                      style: TextStyle(
+                                        color: context.textColor.withOpacity(0.85),
                                         fontSize: 12.0,
                                         fontWeight: FontWeight.w500,
                                         height: 1.35,

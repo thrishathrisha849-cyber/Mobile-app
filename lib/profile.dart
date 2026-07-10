@@ -8,7 +8,19 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:qr/qr.dart';
 import 'package:table_calendar/table_calendar.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'main.dart';
+import 'legal_service.dart';
+import 'support_service.dart';
+import 'notification_service.dart';
+import 'community.dart';
+import 'podcast.dart';
+import 'podcast_service.dart';
+import 'podcast_player_controller.dart';
+import 'ebooks.dart';
+import 'ebook_service.dart';
+import 'tbt_points_service.dart';
+import 'tbt_points_screen.dart';
 
 
 class ProfileScreen extends StatefulWidget {
@@ -16,17 +28,48 @@ class ProfileScreen extends StatefulWidget {
 
   static String? profileImagePath;
 
+  /// The single shared loader for the logged-in user's profile photo path —
+  /// reads the same `profile_path.txt` written by the profile-photo upload
+  /// flow below, and populates the same static `profileImagePath` field
+  /// every screen's avatar reads. Any screen that shows this avatar should
+  /// call this from its own `initState()` (awaiting it, then calling its
+  /// own `setState()` if `mounted`) rather than assuming Profile has
+  /// already been visited and populated it first.
+  static Future<void> ensureProfileImageLoaded() async {
+    if (profileImagePath != null) return;
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final file = File('${directory.path}/profile_path.txt');
+      if (await file.exists()) {
+        final savedPath = await file.readAsString();
+        if (savedPath.isNotEmpty && await File(savedPath).exists()) {
+          profileImagePath = savedPath;
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading profile path: $e');
+    }
+  }
+
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProviderStateMixin {
+class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProviderStateMixin, RouteAware {
   late TabController _tabController;
   bool _notificationsEnabled = true;
   bool _profileVisibility = true;
+  bool _isDarkMode = true; // synced with appThemeNotifier
   bool _isCardFlipped = false;
   double _cardTiltX = 0.0;
   double _cardTiltY = 0.0;
+
+  // Dynamic Theme Getters
+  bool get _isDark => context.isDark;
+  Color get _textColor => context.textColor;
+  Color get _subTextColor => context.subTextColor;
+  Color get _cardBgColor => context.cardBg;
+  Color get _borderColor => context.borderCol;
 
   // Profile data
   String _userName = 'Thrisha';
@@ -36,41 +79,56 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
   String _companyIndustry = 'Design & Digital Marketing';
   String _companySize = '12 Members';
 
+  // Daily Streak / Connections / TBT Points — loaded fresh from Supabase via
+  // TbtPointsService (backed by tbt_activity_log), never hardcoded. Defaults
+  // to 0 until the first load resolves, and again on any load failure.
+  int _totalPoints = 0;
+  int _dailyStreak = 0;
+  int _connectionsCount = 0;
 
-
-  Future<String?> _loadProfilePath() async {
-    try {
-      final directory = await getApplicationDocumentsDirectory();
-      final file = File('${directory.path}/profile_path.txt');
-      if (await file.exists()) {
-        return await file.readAsString();
-      }
-    } catch (e) {
-      debugPrint('Error loading profile path: $e');
-    }
-    return null;
+  Future<void> _loadProfileStats() async {
+    final stats = await TbtPointsService.instance.fetchProfileStats();
+    if (!mounted) return;
+    setState(() {
+      _dailyStreak = stats['dailyStreak'] ?? 0;
+      _connectionsCount = stats['connections'] ?? 0;
+      _totalPoints = stats['tbtPoints'] ?? 0;
+    });
   }
 
+  String get _totalPointsLabel => _totalPoints.toString().replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},');
+
   Future<void> _initProfileImage() async {
-    if (ProfileScreen.profileImagePath == null) {
-      final savedPath = await _loadProfilePath();
-      if (savedPath != null && await File(savedPath).exists()) {
-        setState(() {
-          ProfileScreen.profileImagePath = savedPath;
-        });
-      }
-    }
+    await ProfileScreen.ensureProfileImageLoaded();
+    if (mounted) setState(() {});
   }
 
   @override
   void initState() {
     super.initState();
+    _isDarkMode = appThemeNotifier.value == ThemeMode.dark;
     _tabController = TabController(length: 3, vsync: this);
     _initProfileImage();
+    _loadProfileStats();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    routeObserver.subscribe(this, ModalRoute.of(context) as PageRoute);
+  }
+
+  @override
+  void didPopNext() {
+    // Returning to this Profile page from a screen pushed on top of it —
+    // refresh stats in case they changed while away (e.g. task completed).
+    _loadProfileStats();
   }
 
   @override
   void dispose() {
+    routeObserver.unsubscribe(this);
     _tabController.dispose();
     super.dispose();
   }
@@ -89,7 +147,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
 
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF0F0F11),
+      backgroundColor: context.cardBg,
       isScrollControlled: true,
       constraints: const BoxConstraints(maxWidth: 500),
       shape: const RoundedRectangleBorder(
@@ -119,10 +177,10 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                   ),
                 ),
                 const SizedBox(height: 24.0),
-                const Text(
+                Text(
                   'Edit Business Profile',
                   style: TextStyle(
-                    color: Colors.white,
+                    color: context.textColor,
                     fontSize: 20.0,
                     fontWeight: FontWeight.bold,
                     letterSpacing: -0.5,
@@ -183,6 +241,117 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
       },
     );
   }
+  // ── Dark / Light Mode Toggle Tile ──────────────────────────────────────
+  Widget _buildThemeToggleTile() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 6.0),
+      child: Row(
+        children: [
+          // Icon
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            transitionBuilder: (child, anim) =>
+                ScaleTransition(scale: anim, child: child),
+            child: Icon(
+              _isDarkMode ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
+              key: ValueKey(_isDarkMode),
+              color: const Color(0xFFD30814),
+              size: 20.0,
+            ),
+          ),
+          const SizedBox(width: 16.0),
+          // Labels
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _isDarkMode ? 'Dark Mode' : 'Light Mode',
+                  style: TextStyle(
+                    color: _isDarkMode ? Colors.white : Colors.black87,
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _isDarkMode
+                      ? 'Switch to light theme'
+                      : 'Switch to dark theme',
+                  style: const TextStyle(
+                    color: Color(0xFF8E8E93),
+                    fontSize: 11.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Animated Toggle
+          GestureDetector(
+            onTap: () {
+              setState(() {
+                _isDarkMode = !_isDarkMode;
+                appThemeNotifier.value =
+                    _isDarkMode ? ThemeMode.dark : ThemeMode.light;
+              });
+            },
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+              width: screenWidth * 0.13,
+              height: screenWidth * 0.07,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(30),
+                color: _isDarkMode
+                    ? const Color(0xFFD30814)
+                    : const Color(0xFF9E9E9E),
+                boxShadow: [
+                  BoxShadow(
+                    color: (_isDarkMode
+                            ? const Color(0xFFD30814)
+                            : Colors.grey)
+                        .withOpacity(0.3),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Stack(
+                children: [
+                  AnimatedPositioned(
+                    duration: const Duration(milliseconds: 300),
+                    curve: Curves.easeInOut,
+                    left: _isDarkMode
+                        ? screenWidth * 0.065
+                        : 3,
+                    top: 3,
+                    child: Container(
+                      width: screenWidth * 0.055,
+                      height: screenWidth * 0.055,
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        _isDarkMode
+                            ? Icons.nightlight_round
+                            : Icons.wb_sunny_rounded,
+                        size: screenWidth * 0.032,
+                        color: _isDarkMode
+                            ? const Color(0xFFD30814)
+                            : Colors.amber,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _buildTextField(String label, TextEditingController controller) {
     return Column(
@@ -199,14 +368,14 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
         const SizedBox(height: 8.0),
         TextField(
           controller: controller,
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: context.textColor),
           decoration: InputDecoration(
             filled: true,
-            fillColor: const Color(0xFF1C1C1E),
+            fillColor: context.isDark ? const Color(0xFF1C1C1E) : const Color(0xFFFFFFFF),
             contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 14.0),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12.0),
-              borderSide: const BorderSide(color: Color(0xFF2C2C2E), width: 1.0),
+              borderSide: BorderSide(color: context.borderCol, width: 1.0),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12.0),
@@ -240,85 +409,97 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              Color(0xFF0F0F11),
-              Color(0xFF050505),
-            ],
-          ),
-        ),
-        child: SafeArea(
-          bottom: false,
-          child: Column(
-            children: [
-              // Custom Header Row
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20.0),
-                      onPressed: () => Navigator.pop(context),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: appThemeNotifier,
+      builder: (context, themeMode, _) {
+        final isDark = themeMode == ThemeMode.dark;
+        final textColor = isDark ? Colors.white : Colors.black;
+
+        return Scaffold(
+          body: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: isDark
+                    ? [const Color(0xFF0F0F11), const Color(0xFF050505)]
+                    : [const Color(0xFFF5F5F5), const Color(0xFFE5E5EA)],
+              ),
+            ),
+            child: SafeArea(
+              bottom: false,
+              child: Column(
+                children: [
+                  // Custom Header Row
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          icon: Icon(Icons.arrow_back_ios_new_rounded, color: textColor, size: 20.0),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                        Expanded(
+                          child: Text(
+                            'Elite Profile',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: textColor,
+                              fontSize: 20.0,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: -0.5,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.share_outlined, color: textColor, size: 20.0),
+                          onPressed: _shareProfile,
+                        ),
+                      ],
                     ),
-                    const Expanded(
-                      child: Text(
-                        'Elite Profile',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 20.0,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: -0.5,
+                  ),
+
+                  // Profile Content Scroll View
+                  Expanded(
+                    child: RefreshIndicator(
+                      onRefresh: _loadProfileStats,
+                      color: const Color(0xFFD30814),
+                      child: SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(
+                            parent: BouncingScrollPhysics()),
+                        padding: const EdgeInsets.only(bottom: 24.0),
+                        child: Center(
+                          child: Container(
+                            constraints: const BoxConstraints(maxWidth: 500),
+                            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                const SizedBox(height: 16.0),
+                                _buildProfileHero(),
+                                const SizedBox(height: 24.0),
+                                _buildStatsRow(),
+                                const SizedBox(height: 28.0),
+                                _buildMembershipCardGesture(),
+                                const SizedBox(height: 28.0),
+                                _buildTabBarSection(),
+                                const SizedBox(height: 16.0),
+                                _buildTabContentSection(),
+                                const SizedBox(height: 28.0),
+                                _buildSettingsSection(),
+                              ],
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.share_outlined, color: Colors.white, size: 20.0),
-                      onPressed: _shareProfile,
-                    ),
-                  ],
-                ),
-              ),
-
-              // Profile Content Scroll View
-              Expanded(
-                child: SingleChildScrollView(
-                  physics: const BouncingScrollPhysics(),
-                  padding: const EdgeInsets.only(bottom: 24.0),
-                  child: Center(
-                    child: Container(
-                      constraints: const BoxConstraints(maxWidth: 500),
-                      padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          const SizedBox(height: 16.0),
-                          _buildProfileHero(),
-                          const SizedBox(height: 24.0),
-                          _buildStatsRow(),
-                          const SizedBox(height: 28.0),
-                          _buildMembershipCardGesture(),
-                          const SizedBox(height: 28.0),
-                          _buildTabBarSection(),
-                          const SizedBox(height: 16.0),
-                          _buildTabContentSection(),
-                          const SizedBox(height: 28.0),
-                          _buildSettingsSection(),
-                        ],
-                      ),
-                    ),
                   ),
-                ),
+                ],
               ),
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -356,9 +537,9 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
             Container(
               width: 90.0,
               height: 90.0,
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: Color(0xFF0F0F11),
+                color: _isDark ? const Color(0xFF0F0F11) : Colors.white,
               ),
             ),
             GestureDetector(
@@ -390,7 +571,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                 decoration: BoxDecoration(
                   color: const Color(0xFF27AE60),
                   borderRadius: BorderRadius.circular(10.0),
-                  border: Border.all(color: const Color(0xFF0F0F11), width: 1.5),
+                  border: Border.all(color: _isDark ? const Color(0xFF0F0F11) : Colors.white, width: 1.5),
                 ),
                 child: const Text(
                   'ONLINE',
@@ -407,8 +588,8 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
         const SizedBox(height: 16.0),
         Text(
           _userName,
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: _textColor,
             fontSize: 22.0,
             fontWeight: FontWeight.bold,
             letterSpacing: -0.5,
@@ -418,8 +599,8 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
         Text(
           _userRole,
           textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: Color(0xFF8E8E93),
+          style: TextStyle(
+            color: _subTextColor,
             fontSize: 14.0,
             fontWeight: FontWeight.w500,
           ),
@@ -432,8 +613,8 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
             const SizedBox(width: 4.0),
             Text(
               _userLocation,
-              style: const TextStyle(
-                color: Color(0xFF8E8E93),
+              style: TextStyle(
+                color: _subTextColor,
                 fontSize: 12.0,
               ),
             ),
@@ -484,18 +665,27 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 16.0),
       decoration: BoxDecoration(
-        color: const Color(0xFF141416),
+        color: _cardBgColor,
         borderRadius: BorderRadius.circular(20.0),
-        border: Border.all(color: const Color(0xFF232326), width: 1.0),
+        border: Border.all(color: _borderColor, width: 1.0),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          _buildStatItem('12 Days', 'Daily Streak', Icons.whatshot_rounded, const Color(0xFFFF5E3A)),
+          _buildStatItem('$_dailyStreak Days', 'Daily Streak', Icons.whatshot_rounded, const Color(0xFFFF5E3A)),
           _buildVerticalDivider(),
-          _buildStatItem('142', 'Connections', Icons.people_alt_rounded, const Color(0xFF2F80ED)),
+          _buildStatItem('$_connectionsCount', 'Connections', Icons.people_alt_rounded, const Color(0xFF2F80ED)),
           _buildVerticalDivider(),
-          _buildStatItem('2,450', 'TBT Points', Icons.stars_rounded, const Color(0xFFFFD97D)),
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const TbtPointsScreen()),
+              );
+            },
+            child: _buildStatItem(_totalPointsLabel, 'TBT Points', Icons.stars_rounded, const Color(0xFFFFD97D)),
+          ),
         ],
       ),
     );
@@ -511,8 +701,8 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
             const SizedBox(width: 4.0),
             Text(
               count,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: _textColor,
                 fontSize: 16.0,
                 fontWeight: FontWeight.bold,
               ),
@@ -522,8 +712,8 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
         const SizedBox(height: 4.0),
         Text(
           label,
-          style: const TextStyle(
-            color: Color(0xFF8E8E93),
+          style: TextStyle(
+            color: _subTextColor,
             fontSize: 11.0,
             fontWeight: FontWeight.w500,
           ),
@@ -536,7 +726,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     return Container(
       height: 32.0,
       width: 1.0,
-      color: const Color(0xFF2C2C2E),
+      color: _borderColor,
     );
   }
 
@@ -947,9 +1137,9 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     return Container(
       height: 48.0,
       decoration: BoxDecoration(
-        color: const Color(0xFF141416),
+        color: _cardBgColor,
         borderRadius: BorderRadius.circular(16.0),
-        border: Border.all(color: const Color(0xFF232326), width: 1.0),
+        border: Border.all(color: _borderColor, width: 1.0),
       ),
       child: TabBar(
         controller: _tabController,
@@ -960,7 +1150,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
         indicatorSize: TabBarIndicatorSize.tab,
         dividerColor: Colors.transparent,
         labelColor: Colors.white,
-        unselectedLabelColor: const Color(0xFF8E8E93),
+        unselectedLabelColor: _subTextColor,
         labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.0),
         tabs: const [
           Tab(text: 'Business'),
@@ -994,9 +1184,9 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     return Container(
       padding: const EdgeInsets.all(20.0),
       decoration: BoxDecoration(
-        color: const Color(0xFF141416),
+        color: _cardBgColor,
         borderRadius: BorderRadius.circular(24.0),
-        border: Border.all(color: const Color(0xFF232326), width: 1.0),
+        border: Border.all(color: _borderColor, width: 1.0),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1004,10 +1194,10 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
+              Text(
                 'Company Overview',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: _textColor,
                   fontSize: 16.0,
                   fontWeight: FontWeight.bold,
                 ),
@@ -1037,20 +1227,20 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
           _buildBusinessRow('Team Size', _companySize, Icons.people_rounded),
           _buildBusinessRow('Registered Office', 'Adyar, Chennai', Icons.location_on_rounded),
           const SizedBox(height: 8.0),
-          const Divider(color: Color(0xFF232326), height: 24.0),
-          const Text(
+          Divider(color: _borderColor, height: 24.0),
+          Text(
             'Target Network',
             style: TextStyle(
-              color: Colors.white,
+              color: _textColor,
               fontSize: 14.0,
               fontWeight: FontWeight.bold,
             ),
           ),
           const SizedBox(height: 10.0),
-          const Text(
+          Text(
             'Looking to connect with SaaS founders, agency owners, and digital content creators in Tamil Nadu to collaborate on creative branding projects.',
             style: TextStyle(
-              color: Color(0xFF8E8E93),
+              color: _subTextColor,
               fontSize: 13.0,
               height: 1.4,
             ),
@@ -1068,10 +1258,10 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
           Container(
             padding: const EdgeInsets.all(8.0),
             decoration: BoxDecoration(
-              color: const Color(0xFF1C1C1E),
+              color: _isDark ? const Color(0xFF1C1C1E) : const Color(0xFFE5E5EA),
               borderRadius: BorderRadius.circular(10.0),
             ),
-            child: Icon(icon, color: Colors.white70, size: 16.0),
+            child: Icon(icon, color: _isDark ? Colors.white70 : Colors.black87, size: 16.0),
           ),
           const SizedBox(width: 12.0),
           Column(
@@ -1079,8 +1269,8 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
             children: [
               Text(
                 label,
-                style: const TextStyle(
-                  color: Color(0xFF8E8E93),
+                style: TextStyle(
+                  color: _subTextColor,
                   fontSize: 10.5,
                   fontWeight: FontWeight.bold,
                 ),
@@ -1088,8 +1278,8 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
               const SizedBox(height: 2.0),
               Text(
                 value,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: _textColor,
                   fontSize: 13.5,
                   fontWeight: FontWeight.w600,
                 ),
@@ -1108,31 +1298,25 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
         'title': 'Hit 15 Active Retainer Clients! 🎯',
         'desc': 'Excited to announce that Creative Studios has closed 4 new retainers this week! Kudos to the design team.',
         'time': '2 days ago',
-        'likes': '34',
+        'likes': '24',
       },
       {
-        'title': 'Morning Ritual 12-day Consistency Streak 🔥',
-        'desc': 'Woke up at 5:00 AM, wrote morning pages, meditated, exercised, and planned day. Consistency pays off.',
+        'title': 'Launched TBT Tamil podcast app! 🎙️',
+        'desc': 'Our Android app design has been fully deployed. Thanks to mentors for guiding our team structural steps.',
         'time': '1 week ago',
-        'likes': '58',
-      },
-      {
-        'title': 'Presented at Chennai TBT Meetup 🎤',
-        'desc': 'Shared insights on visual branding & copywriting strategies for local businesses. Incredible networking energy!',
-        'time': '2 weeks ago',
-        'likes': '82',
-      },
+        'likes': '38',
+      }
     ];
 
     return Column(
       children: mockWins.map((win) {
         return Container(
           margin: const EdgeInsets.only(bottom: 12.0),
-          padding: const EdgeInsets.all(18.0),
+          padding: const EdgeInsets.all(16.0),
           decoration: BoxDecoration(
-            color: const Color(0xFF141416),
+            color: _cardBgColor,
             borderRadius: BorderRadius.circular(20.0),
-            border: Border.all(color: const Color(0xFF232326), width: 1.0),
+            border: Border.all(color: _borderColor, width: 1.0),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1143,8 +1327,8 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                   Expanded(
                     child: Text(
                       win['title']!,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: _textColor,
                         fontSize: 14.5,
                         fontWeight: FontWeight.bold,
                       ),
@@ -1152,8 +1336,8 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                   ),
                   Text(
                     win['time']!,
-                    style: const TextStyle(
-                      color: Color(0xFF8E8E93),
+                    style: TextStyle(
+                      color: _subTextColor,
                       fontSize: 11.0,
                     ),
                   ),
@@ -1162,21 +1346,21 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
               const SizedBox(height: 10.0),
               Text(
                 win['desc']!,
-                style: const TextStyle(
-                  color: Color(0xFFD1D1D6),
+                style: TextStyle(
+                  color: _textColor.withOpacity(0.85),
                   fontSize: 13.0,
                   height: 1.35,
                 ),
               ),
-              const Divider(color: Color(0xFF232326), height: 24.0),
+              Divider(color: _borderColor, height: 24.0),
               Row(
                 children: [
                   const Icon(Icons.thumb_up_alt_rounded, color: Color(0xFFD30814), size: 14.0),
                   const SizedBox(width: 6.0),
                   Text(
                     '${win['likes']} support reactions',
-                    style: const TextStyle(
-                      color: Color(0xFF8E8E93),
+                    style: TextStyle(
+                      color: _subTextColor,
                       fontSize: 12.0,
                       fontWeight: FontWeight.w500,
                     ),
@@ -1219,7 +1403,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
           child: Container(
             padding: const EdgeInsets.all(16.0),
             decoration: BoxDecoration(
-              color: const Color(0xFF141416),
+              color: _cardBgColor,
               borderRadius: BorderRadius.circular(20.0),
               border: Border.all(color: trophy['color'].withOpacity(0.2), width: 1.0),
             ),
@@ -1238,17 +1422,17 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                 Text(
                   trophy['name'],
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _textColor,
                     fontSize: 13.0,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
                 const SizedBox(height: 4.0),
-                const Text(
+                Text(
                   'Tap details',
                   style: TextStyle(
-                    color: Color(0xFF8E8E93),
+                    color: _subTextColor,
                     fontSize: 10.0,
                   ),
                 ),
@@ -1325,21 +1509,27 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     );
   }
 
-  // General settings layout
   Widget _buildSettingsSection() {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final textColor = theme.colorScheme.onSurface;
+    final subTextColor = textColor.withOpacity(0.6);
+    final cardBg = isDark ? const Color(0xFF141416) : Colors.white;
+    final borderCol = isDark ? const Color(0xFF232326) : const Color(0xFFE5E5EA);
+
     return Container(
       padding: const EdgeInsets.all(8.0),
       decoration: BoxDecoration(
-        color: const Color(0xFF141416),
+        color: cardBg,
         borderRadius: BorderRadius.circular(24.0),
-        border: Border.all(color: const Color(0xFF232326), width: 1.0),
+        border: Border.all(color: borderCol, width: 1.0),
       ),
       child: Column(
         children: [
           SwitchListTile(
             secondary: const Icon(Icons.notifications_outlined, color: Color(0xFFD30814), size: 20.0),
-            title: const Text('Notifications', style: TextStyle(color: Colors.white, fontSize: 14.5, fontWeight: FontWeight.bold)),
-            subtitle: const Text('Get alerts for wins, updates & comments', style: TextStyle(color: Color(0xFF8E8E93), fontSize: 11.5)),
+            title: Text('Notifications', style: TextStyle(color: textColor, fontSize: 14.5, fontWeight: FontWeight.bold)),
+            subtitle: Text('Get alerts for wins, updates & comments', style: TextStyle(color: subTextColor, fontSize: 11.5)),
             value: _notificationsEnabled,
             activeColor: const Color(0xFFD30814),
             onChanged: (val) {
@@ -1348,11 +1538,11 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
               });
             },
           ),
-          const Divider(color: Color(0xFF232326), height: 1.0, indent: 16.0, endIndent: 16.0),
+          Divider(color: borderCol, height: 1.0, indent: 16.0, endIndent: 16.0),
           SwitchListTile(
             secondary: const Icon(Icons.visibility_outlined, color: Color(0xFFD30814), size: 20.0),
-            title: const Text('Public Visibility', style: TextStyle(color: Colors.white, fontSize: 14.5, fontWeight: FontWeight.bold)),
-            subtitle: const Text('Allow non-connections to view portfolio', style: TextStyle(color: Color(0xFF8E8E93), fontSize: 11.5)),
+            title: Text('Public Visibility', style: TextStyle(color: textColor, fontSize: 14.5, fontWeight: FontWeight.bold)),
+            subtitle: Text('Allow non-connections to view portfolio', style: TextStyle(color: subTextColor, fontSize: 11.5)),
             value: _profileVisibility,
             activeColor: const Color(0xFFD30814),
             onChanged: (val) {
@@ -1361,11 +1551,14 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
               });
             },
           ),
-          const Divider(color: Color(0xFF232326), height: 1.0, indent: 16.0, endIndent: 16.0),
+          Divider(color: borderCol, height: 1.0, indent: 16.0, endIndent: 16.0),
+          // ── Dark / Light Mode Toggle ─────────────────────────────────
+          _buildThemeToggleTile(),
+          Divider(color: borderCol, height: 1.0, indent: 16.0, endIndent: 16.0),
           ListTile(
             leading: const Icon(Icons.manage_accounts_rounded, color: Color(0xFFD30814), size: 20.0),
-            title: const Text('My Account', style: TextStyle(color: Colors.white, fontSize: 14.5, fontWeight: FontWeight.bold)),
-            trailing: const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white70, size: 14.0),
+            title: Text('My Account', style: TextStyle(color: textColor, fontSize: 14.5, fontWeight: FontWeight.bold)),
+            trailing: Icon(Icons.arrow_forward_ios_rounded, color: textColor.withOpacity(0.7), size: 14.0),
             onTap: () {
               Navigator.push(
                 context,
@@ -1378,11 +1571,11 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
               );
             },
           ),
-          const Divider(color: Color(0xFF232326), height: 1.0, indent: 16.0, endIndent: 16.0),
+          Divider(color: borderCol, height: 1.0, indent: 16.0, endIndent: 16.0),
           ListTile(
             leading: const Icon(Icons.support_agent_rounded, color: Color(0xFFD30814), size: 20.0),
-            title: const Text('Support', style: TextStyle(color: Colors.white, fontSize: 14.5, fontWeight: FontWeight.bold)),
-            trailing: const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white70, size: 14.0),
+            title: Text('Support', style: TextStyle(color: textColor, fontSize: 14.5, fontWeight: FontWeight.bold)),
+            trailing: Icon(Icons.arrow_forward_ios_rounded, color: textColor.withOpacity(0.7), size: 14.0),
             onTap: () {
               Navigator.push(
                 context,
@@ -1392,45 +1585,45 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
               );
             },
           ),
-          const Divider(color: Color(0xFF232326), height: 1.0, indent: 16.0, endIndent: 16.0),
+          Divider(color: borderCol, height: 1.0, indent: 16.0, endIndent: 16.0),
           ListTile(
             leading: const Icon(Icons.gavel_rounded, color: Color(0xFFD30814), size: 20.0),
-            title: const Text('Terms & Conditions', style: TextStyle(color: Colors.white, fontSize: 14.5, fontWeight: FontWeight.bold)),
-            trailing: const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white70, size: 14.0),
+            title: Text('Terms & Conditions', style: TextStyle(color: textColor, fontSize: 14.5, fontWeight: FontWeight.bold)),
+            trailing: Icon(Icons.arrow_forward_ios_rounded, color: textColor.withOpacity(0.7), size: 14.0),
             onTap: () {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => ProfileSettingsDetailScreen(
+                  builder: (context) => const DynamicLegalPageScreen(
                     title: 'Terms & Conditions',
-                    content: _buildTermsContent(),
+                    slug: 'terms',
                   ),
                 ),
               );
             },
           ),
-          const Divider(color: Color(0xFF232326), height: 1.0, indent: 16.0, endIndent: 16.0),
+          Divider(color: borderCol, height: 1.0, indent: 16.0, endIndent: 16.0),
           ListTile(
             leading: const Icon(Icons.privacy_tip_outlined, color: Color(0xFFD30814), size: 20.0),
-            title: const Text('Privacy Policy', style: TextStyle(color: Colors.white, fontSize: 14.5, fontWeight: FontWeight.bold)),
-            trailing: const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white70, size: 14.0),
+            title: Text('Privacy Policy', style: TextStyle(color: textColor, fontSize: 14.5, fontWeight: FontWeight.bold)),
+            trailing: Icon(Icons.arrow_forward_ios_rounded, color: textColor.withOpacity(0.7), size: 14.0),
             onTap: () {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => ProfileSettingsDetailScreen(
+                  builder: (context) => const DynamicLegalPageScreen(
                     title: 'Privacy Policy',
-                    content: _buildPrivacyContent(),
+                    slug: 'privacy',
                   ),
                 ),
               );
             },
           ),
-          const Divider(color: Color(0xFF232326), height: 1.0, indent: 16.0, endIndent: 16.0),
+          Divider(color: borderCol, height: 1.0, indent: 16.0, endIndent: 16.0),
           ListTile(
             leading: const Icon(Icons.logout_rounded, color: Color(0xFFD30814), size: 20.0),
-            title: const Text('Logout', style: TextStyle(color: Colors.white, fontSize: 14.5, fontWeight: FontWeight.bold)),
-            trailing: const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white70, size: 14.0),
+            title: Text('Logout', style: TextStyle(color: textColor, fontSize: 14.5, fontWeight: FontWeight.bold)),
+            trailing: Icon(Icons.arrow_forward_ios_rounded, color: textColor.withOpacity(0.7), size: 14.0),
             onTap: () {
               Navigator.push(
                 context,
@@ -1440,11 +1633,11 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
               );
             },
           ),
-          const Divider(color: Color(0xFF232326), height: 1.0, indent: 16.0, endIndent: 16.0),
+          Divider(color: borderCol, height: 1.0, indent: 16.0, endIndent: 16.0),
           ListTile(
             leading: const Icon(Icons.calendar_month_rounded, color: Color(0xFFD30814), size: 20.0),
-            title: const Text('Attendance', style: TextStyle(color: Colors.white, fontSize: 14.5, fontWeight: FontWeight.bold)),
-            trailing: const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white70, size: 14.0),
+            title: Text('Attendance', style: TextStyle(color: textColor, fontSize: 14.5, fontWeight: FontWeight.bold)),
+            trailing: Icon(Icons.arrow_forward_ios_rounded, color: textColor.withOpacity(0.7), size: 14.0),
             onTap: () {
               Navigator.push(
                 context,
@@ -1521,7 +1714,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
             child: const Text(
               'Edit Account Details',
               style: TextStyle(
-                color: Colors.white,
+                color: Color(0xFFD30814),
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -1536,13 +1729,13 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
       margin: const EdgeInsets.only(bottom: 16.0),
       padding: const EdgeInsets.all(16.0),
       decoration: BoxDecoration(
-        color: const Color(0xFF141416),
+        color: context.cardBg,
         borderRadius: BorderRadius.circular(16.0),
-        border: Border.all(color: const Color(0xFF232326), width: 1.0),
+        border: Border.all(color: context.borderCol, width: 1.0),
       ),
       child: Row(
         children: [
-          Icon(icon, color: const Color(0xFF8E8E93), size: 20.0),
+          Icon(icon, color: context.subTextColor, size: 20.0),
           const SizedBox(width: 16.0),
           Expanded(
             child: Column(
@@ -1550,8 +1743,8 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
               children: [
                 Text(
                   label,
-                  style: const TextStyle(
-                    color: Color(0xFF8E8E93),
+                  style: TextStyle(
+                    color: context.subTextColor,
                     fontSize: 11.0,
                     fontWeight: FontWeight.bold,
                   ),
@@ -1560,7 +1753,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                 Text(
                   value,
                   style: TextStyle(
-                    color: statusColor ?? Colors.white,
+                    color: statusColor ?? context.textColor,
                     fontSize: 14.0,
                     fontWeight: FontWeight.bold,
                   ),
@@ -1574,85 +1767,6 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
   }
 
 
-  Widget _buildTermsContent() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Terms & Conditions',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 20.0,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 6.0),
-        const Text(
-          'Last updated: June 2026',
-          style: TextStyle(color: Color(0xFF8E8E93), fontSize: 12.0),
-        ),
-        const SizedBox(height: 20.0),
-        _buildPolicySection('1. Acceptance of Terms', 'By accessing or using the Tamil Business Tribe app, you agree to comply with and be bound by these Terms and Conditions. If you do not agree, please do not use our services.'),
-        _buildPolicySection('2. Member Account & Security', 'You are responsible for keeping your credentials confidential. Any activity taking place on your registered profile is your exclusive liability. Please inform support immediately of any unauthorized access.'),
-        _buildPolicySection('3. Community Guidelines', 'The Tamil Business Tribe thrives on cooperation, respect, and mutual business growth. Members must not post spam, offensive content, or violate the privacy of other members. Infringing items will be removed without notice.'),
-        _buildPolicySection('4. Premium Services & Fees', 'Elite memberships, ticket bookings, and special mentor workshops are subject to payments. All fees are non-refundable except as explicitly specified in our cancellation terms.'),
-      ],
-    );
-  }
-
-  Widget _buildPrivacyContent() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Privacy Policy',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 20.0,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 6.0),
-        const Text(
-          'Last updated: June 2026',
-          style: TextStyle(color: Color(0xFF8E8E93), fontSize: 12.0),
-        ),
-        const SizedBox(height: 20.0),
-        _buildPolicySection('1. Information We Collect', 'We collect business information, company metadata, profile photo references, and contact details during elite registration to facilitate community interactions and networking metrics.'),
-        _buildPolicySection('2. How We Use Data', 'Your information is utilized to maintain your virtual membership card, custom badge rewards, and timeline statistics. We do not sell or leak member records to third-party databases.'),
-        _buildPolicySection('3. Storage & Security', 'We employ secure encryption standards to store credentials and transaction data. Only approved TBT mentors have access to metrics for accountability and task evaluation.'),
-        _buildPolicySection('4. Your Privacy Rights', 'You can restrict details shown to public members by enabling "Public Visibility" in settings, or request account deletions by emailing support.'),
-      ],
-    );
-  }
-
-  Widget _buildPolicySection(String heading, String text) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 20.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            heading,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 14.5,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 8.0),
-          Text(
-            text,
-            style: const TextStyle(
-              color: Color(0xFF8E8E93),
-              fontSize: 13.0,
-              height: 1.4,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class ProfileSettingsDetailScreen extends StatelessWidget {
@@ -1667,16 +1781,18 @@ class ProfileSettingsDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = context.isDark;
+    final textColor = context.textColor;
+
     return Scaffold(
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
+          color: context.scaffoldBg,
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              Color(0xFF0F0F11),
-              Color(0xFF050505),
-            ],
+            colors: context.themeGradients,
+            stops: const [0.0, 0.45, 1.0],
           ),
         ),
         child: SafeArea(
@@ -1688,15 +1804,15 @@ class ProfileSettingsDetailScreen extends StatelessWidget {
                 child: Row(
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20.0),
+                      icon: Icon(Icons.arrow_back_ios_new_rounded, color: isDark ? const Color(0xFFFCA5A5) : const Color(0xFFD30814), size: 20.0),
                       onPressed: () => Navigator.pop(context),
                     ),
                     Expanded(
                       child: Text(
                         title,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: textColor,
                           fontSize: 20.0,
                           fontWeight: FontWeight.bold,
                           letterSpacing: -0.5,
@@ -1722,6 +1838,214 @@ class ProfileSettingsDetailScreen extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class DynamicLegalPageScreen extends StatefulWidget {
+  final String title;
+  final String slug;
+
+  const DynamicLegalPageScreen({
+    super.key,
+    required this.title,
+    required this.slug,
+  });
+
+  @override
+  State<DynamicLegalPageScreen> createState() => _DynamicLegalPageScreenState();
+}
+
+class _DynamicLegalPageScreenState extends State<DynamicLegalPageScreen> {
+  bool _isLoading = true;
+  String? _content;
+  String? _title;
+  String? _updatedAt;
+  bool _isUnavailable = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPage();
+  }
+
+  Future<void> _loadPage() async {
+    setState(() {
+      _isLoading = true;
+      _isUnavailable = false;
+    });
+    try {
+      final pageData = await LegalService.instance.fetchPage(widget.slug);
+      if (mounted) {
+        setState(() {
+          final content = pageData?['content'] as String?;
+          if (pageData != null && content != null && content.isNotEmpty) {
+            _content = content;
+            final fetchedTitle = pageData['title'] as String?;
+            _title = (fetchedTitle != null && fetchedTitle.isNotEmpty)
+                ? fetchedTitle
+                : widget.title;
+            final updatedAt = pageData['updatedAt'] as String?;
+            _updatedAt = updatedAt != null
+                ? 'Last updated: ${_formatUpdatedAt(updatedAt)}'
+                : null;
+          } else {
+            // No active page found in admin (never configured, or deactivated) —
+            // show a real empty state instead of masking it with static text.
+            _content = null;
+            _title = widget.title;
+            _updatedAt = null;
+            _isUnavailable = true;
+          }
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading legal page from database: $e');
+      if (mounted) {
+        setState(() {
+          _isUnavailable = true;
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  String _formatUpdatedAt(String isoString) {
+    try {
+      final dt = DateTime.parse(isoString).toLocal();
+      const months = [
+        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      ];
+      final day = dt.day.toString().padLeft(2, '0');
+      final month = months[dt.month - 1];
+      final hour12 = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+      final minute = dt.minute.toString().padLeft(2, '0');
+      final ampm = dt.hour >= 12 ? 'PM' : 'AM';
+      return '$day $month ${dt.year}, $hour12:$minute $ampm';
+    } catch (_) {
+      return isoString;
+    }
+  }
+
+  Widget _buildDynamicContent(String rawContent) {
+    final List<Widget> children = [];
+
+    children.add(
+      Text(
+        _title ?? widget.title,
+        style: TextStyle(
+          color: context.textColor,
+          fontSize: 20.0,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+    children.add(const SizedBox(height: 6.0));
+    
+    if (_updatedAt != null) {
+      children.add(
+        Text(
+          _updatedAt!,
+          style: TextStyle(color: context.subTextColor, fontSize: 12.0),
+        ),
+      );
+    }
+    children.add(const SizedBox(height: 20.0));
+
+    final paragraphs = rawContent.split('\n\n');
+    for (var para in paragraphs) {
+      para = para.trim();
+      if (para.isEmpty) continue;
+      
+      final lines = para.split('\n');
+      if (lines.length > 1 && (lines[0].trim().startsWith(RegExp(r'^\d+\.')) || lines[0].trim().length < 60)) {
+        final heading = lines[0].trim();
+        final body = lines.sublist(1).join('\n').trim();
+        
+        children.add(
+          Padding(
+            padding: const EdgeInsets.only(bottom: 20.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  heading,
+                  style: TextStyle(
+                    color: context.textColor,
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8.0),
+                Text(
+                  body,
+                  style: TextStyle(
+                    color: context.subTextColor,
+                    fontSize: 13.0,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      } else {
+        children.add(
+          Padding(
+            padding: const EdgeInsets.only(bottom: 20.0),
+            child: Text(
+              para,
+              style: TextStyle(
+                color: context.subTextColor,
+                fontSize: 13.0,
+                height: 1.4,
+              ),
+            ),
+          ),
+        );
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: children,
+    );
+  }
+
+  Widget _buildUnavailableState() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 60.0),
+      child: Column(
+        children: [
+          Icon(Icons.description_outlined,
+              color: context.subTextColor, size: 40.0),
+          const SizedBox(height: 12.0),
+          Text(
+            '${widget.title} is not available right now.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: context.subTextColor, fontSize: 13.5),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ProfileSettingsDetailScreen(
+      title: _title ?? widget.title,
+      content: _isLoading
+          ? const Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 40.0),
+                child: CircularProgressIndicator(color: Color(0xFFD30814)),
+              ),
+            )
+          : _content != null
+              ? _buildDynamicContent(_content!)
+              : _buildUnavailableState(),
     );
   }
 }
@@ -1756,16 +2080,19 @@ class _LogoutConfirmationScreenState extends State<LogoutConfirmationScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = context.isDark;
+    final textColor = context.textColor;
+    final subTextColor = context.subTextColor;
+
     return Scaffold(
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
+          color: context.scaffoldBg,
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              Color(0xFF0F0F11),
-              Color(0xFF050505),
-            ],
+            colors: context.themeGradients,
+            stops: const [0.0, 0.45, 1.0],
           ),
         ),
         child: SafeArea(
@@ -1776,24 +2103,24 @@ class _LogoutConfirmationScreenState extends State<LogoutConfirmationScreen> {
               child: _isLoggingOut
                   ? Column(
                       mainAxisAlignment: MainAxisAlignment.center,
-                      children: const [
-                        CircularProgressIndicator(
+                      children: [
+                        const CircularProgressIndicator(
                           color: Color(0xFFD30814),
                         ),
-                        SizedBox(height: 24.0),
+                        const SizedBox(height: 24.0),
                         Text(
                           'Logging out safely...',
                           style: TextStyle(
-                            color: Colors.white,
+                            color: textColor,
                             fontSize: 18.0,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        SizedBox(height: 8.0),
+                        const SizedBox(height: 8.0),
                         Text(
                           'Saving your local statistics and wins',
                           style: TextStyle(
-                            color: Color(0xFF8E8E93),
+                            color: subTextColor,
                             fontSize: 13.0,
                           ),
                         ),
@@ -1816,21 +2143,21 @@ class _LogoutConfirmationScreenState extends State<LogoutConfirmationScreen> {
                               ),
                             ),
                             const SizedBox(height: 24.0),
-                            const Text(
+                            Text(
                               'Successfully Logged Out',
                               style: TextStyle(
-                                color: Colors.white,
+                                color: textColor,
                                 fontSize: 22.0,
                                 fontWeight: FontWeight.bold,
                                 letterSpacing: -0.5,
                               ),
                             ),
                             const SizedBox(height: 8.0),
-                            const Text(
+                            Text(
                               'You have been logged out of Tamil Business Tribe.',
                               textAlign: TextAlign.center,
                               style: TextStyle(
-                                color: Color(0xFF8E8E93),
+                                color: subTextColor,
                                 fontSize: 14.0,
                               ),
                             ),
@@ -1880,21 +2207,21 @@ class _LogoutConfirmationScreenState extends State<LogoutConfirmationScreen> {
                               ),
                             ),
                             const SizedBox(height: 24.0),
-                            const Text(
+                            Text(
                               'Confirm Logout',
                               style: TextStyle(
-                                color: Colors.white,
+                                color: textColor,
                                 fontSize: 22.0,
                                 fontWeight: FontWeight.bold,
                                 letterSpacing: -0.5,
                               ),
                             ),
                             const SizedBox(height: 8.0),
-                            const Text(
+                            Text(
                               'Are you sure you want to log out of your elite member profile?',
                               textAlign: TextAlign.center,
                               style: TextStyle(
-                                color: Color(0xFF8E8E93),
+                                color: subTextColor,
                                 fontSize: 14.0,
                                 height: 1.4,
                               ),
@@ -1906,16 +2233,16 @@ class _LogoutConfirmationScreenState extends State<LogoutConfirmationScreen> {
                                   child: OutlinedButton(
                                     onPressed: () => Navigator.pop(context),
                                     style: OutlinedButton.styleFrom(
-                                      side: const BorderSide(color: Color(0xFF2C2C2E)),
+                                      side: BorderSide(color: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFD1D1D6)),
                                       padding: const EdgeInsets.symmetric(vertical: 16.0),
                                       shape: RoundedRectangleBorder(
                                         borderRadius: BorderRadius.circular(16.0),
                                       ),
                                     ),
-                                    child: const Text(
+                                    child: Text(
                                       'Cancel',
                                       style: TextStyle(
-                                        color: Colors.white,
+                                        color: textColor,
                                         fontWeight: FontWeight.bold,
                                       ),
                                     ),
@@ -1974,8 +2301,30 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
   List<String> _attachments = [];
 
   bool _isSubmitted = false;
+  bool _isSubmitting = false;
   String _submittedTicketId = '';
   String _selectedContactMethod = 'WHATSAPP'; // EMAIL, WHATSAPP
+
+  List<Map<String, dynamic>> _categories = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCategories();
+  }
+
+  Future<void> _loadCategories() async {
+    try {
+      final categories = await SupportService.instance.fetchCategories();
+      if (mounted) {
+        setState(() {
+          _categories = categories;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading support categories: $e');
+    }
+  }
 
   @override
   void dispose() {
@@ -2017,9 +2366,15 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
     }
   }
 
-  void _submitTicket() {
+  void _submitTicket() async {
+    if (_isSubmitting) return;
+    setState(() => _isSubmitting = true);
+
     final ticketId = '#TBT-${2000 + (DateTime.now().millisecond % 1000)}';
     final ticketTitle = _subjectController.text.trim();
+    final description = _descriptionController.text.trim().isNotEmpty
+        ? _descriptionController.text.trim()
+        : 'No description provided.';
     final newTicket = {
       'id': ticketId,
       'title': ticketTitle.isNotEmpty ? ticketTitle : 'New Support Request',
@@ -2034,36 +2389,69 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
         {
           'sender': 'user',
           'senderName': 'Alexander',
-          'text': _descriptionController.text.trim().isNotEmpty
-              ? _descriptionController.text.trim()
-              : 'No description provided.',
+          'text': description,
           'time': 'SENT - Just Now',
         }
       ],
     };
     widget.onTicketCreated(newTicket);
+
+    // Persist the ticket to Supabase so it actually reaches the admin panel —
+    // previously this only ever updated the local in-memory ticket list.
+    try {
+      final anonymousId =
+          await SupportService.instance.getOrCreateAnonymousUserId();
+      String? categoryId;
+      if (_selectedCategory != null && _categories.isNotEmpty) {
+        final match =
+            _categories.where((c) => c['name'] == _selectedCategory);
+        if (match.isNotEmpty) categoryId = match.first['id'] as String?;
+      }
+      String? attachmentUrl;
+      if (_attachments.isNotEmpty) {
+        attachmentUrl =
+            await SupportService.instance.uploadAttachment(_attachments.first);
+      }
+      await SupportService.instance.submitTicket(
+        name: 'TBT Mobile User',
+        email:
+            '${anonymousId.substring(0, anonymousId.length < 8 ? anonymousId.length : 8)}@mobile.tbt',
+        subject: ticketTitle.isNotEmpty ? ticketTitle : 'New Support Request',
+        categoryId: categoryId,
+        message: description,
+        attachmentUrl: attachmentUrl,
+      );
+    } catch (e) {
+      debugPrint('Error submitting ticket to backend: $e');
+    }
+
+    if (!mounted) return;
     setState(() {
       _submittedTicketId = ticketId;
       _isSubmitted = true;
+      _isSubmitting = false;
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    final isDark = context.isDark;
+    final textColor = context.textColor;
+    final subTextColor = context.subTextColor;
+
     if (_isSubmitted) {
       return _buildSuccessScreen();
     }
     return Scaffold(
       resizeToAvoidBottomInset: true,
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
+          color: context.scaffoldBg,
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              Color(0xFF0F0F11),
-              Color(0xFF050505),
-            ],
+            colors: context.themeGradients,
+            stops: const [0.0, 0.45, 1.0],
           ),
         ),
         child: SafeArea(
@@ -2080,10 +2468,10 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
                       onPressed: _previousStep,
                     ),
                     const SizedBox(width: 8.0),
-                    const Text(
+                    Text(
                       'Raise a Ticket',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: textColor,
                         fontSize: 22.0,
                         fontWeight: FontWeight.bold,
                         letterSpacing: -0.5,
@@ -2139,11 +2527,11 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           if (_currentStep == 3) ...[
-                            const Text.rich(
+                            Text.rich(
                               TextSpan(
                                 text: 'Final ',
                                 style: TextStyle(
-                                  color: Colors.white,
+                                  color: textColor,
                                   fontSize: 28.0,
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -2174,9 +2562,9 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
                           Container(
                             clipBehavior: Clip.antiAlias,
                             decoration: BoxDecoration(
-                              color: const Color(0xFF141416),
+                              color: context.cardBg,
                               borderRadius: BorderRadius.circular(20.0),
-                              border: Border.all(color: const Color(0xFF232326)),
+                              border: Border.all(color: context.borderCol),
                             ),
                             child: Stack(
                               children: [
@@ -2405,10 +2793,10 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           'Tell us your issue',
           style: TextStyle(
-            color: Colors.white,
+            color: context.textColor,
             fontSize: 24.0,
             fontWeight: FontWeight.bold,
             fontStyle: FontStyle.italic,
@@ -2430,24 +2818,30 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
         DropdownButtonFormField<String>(
           value: _selectedCategory,
           hint: const Text('Select a category', style: TextStyle(color: Color(0xFF8E8E93), fontSize: 14.0)),
-          dropdownColor: const Color(0xFF141416),
-          style: const TextStyle(color: Colors.white),
+          dropdownColor: context.cardBg,
+          style: TextStyle(color: context.textColor),
           icon: const Icon(Icons.keyboard_double_arrow_down_rounded, color: Color(0xFF8E8E93)),
           decoration: InputDecoration(
             filled: true,
-            fillColor: const Color(0xFF1C1C1E),
+            fillColor: context.isDark ? const Color(0xFF1C1C1E) : const Color(0xFFFFFFFF),
             contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 14.0),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12.0),
-              borderSide: const BorderSide(color: Color(0xFF2C2C2E)),
+              borderSide: BorderSide(color: context.borderCol),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12.0),
               borderSide: const BorderSide(color: Color(0xFFD30814)),
             ),
           ),
-          items: ['Payments', 'Technicals', 'Community'].map((cat) {
-            return DropdownMenuItem<String>(value: cat, child: Text(cat));
+          items: (_categories.isNotEmpty
+                  ? _categories.map((c) => c['name'] as String).toList()
+                  : ['Payments', 'Technicals', 'Community'])
+              .map((cat) {
+            return DropdownMenuItem<String>(
+              value: cat,
+              child: Text(cat, style: TextStyle(color: context.textColor)),
+            );
           }).toList(),
           onChanged: (val) {
             setState(() {
@@ -2461,16 +2855,16 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
         const SizedBox(height: 8.0),
         TextField(
           controller: _subjectController,
-          style: const TextStyle(color: Colors.white, fontSize: 14.0),
+          style: TextStyle(color: context.textColor, fontSize: 14.0),
           decoration: InputDecoration(
             hintText: 'Briefly describe the issue',
             hintStyle: const TextStyle(color: Color(0xFF8E8E93)),
             filled: true,
-            fillColor: const Color(0xFF1C1C1E),
+            fillColor: context.isDark ? const Color(0xFF1C1C1E) : const Color(0xFFFFFFFF),
             contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 14.0),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12.0),
-              borderSide: const BorderSide(color: Color(0xFF2C2C2E)),
+              borderSide: BorderSide(color: context.borderCol),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12.0),
@@ -2498,16 +2892,16 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
         TextField(
           controller: _descriptionController,
           maxLines: 5,
-          style: const TextStyle(color: Colors.white, fontSize: 14.0),
+          style: TextStyle(color: context.textColor, fontSize: 14.0),
           decoration: InputDecoration(
             hintText: 'Provide specific steps to reproduce the issue or context for your request...',
             hintStyle: const TextStyle(color: Color(0xFF8E8E93)),
             filled: true,
-            fillColor: const Color(0xFF1C1C1E),
+            fillColor: context.isDark ? const Color(0xFF1C1C1E) : const Color(0xFFFFFFFF),
             contentPadding: const EdgeInsets.all(16.0),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12.0),
-              borderSide: const BorderSide(color: Color(0xFF2C2C2E)),
+              borderSide: BorderSide(color: context.borderCol),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12.0),
@@ -2523,10 +2917,10 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           'Supporting Evidence',
           style: TextStyle(
-            color: Colors.white,
+            color: context.textColor,
             fontSize: 22.0,
             fontWeight: FontWeight.bold,
           ),
@@ -2558,25 +2952,25 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
             child: Container(
               height: 120,
               decoration: BoxDecoration(
-                color: const Color(0xFF141416).withOpacity(0.5),
+                color: context.isDark ? const Color(0xFF141416).withOpacity(0.5) : const Color(0xFFE5E5EA),
                 borderRadius: BorderRadius.circular(16.0),
               ),
               child: Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
-                  children: const [
-                    Icon(Icons.cloud_upload_outlined, color: Colors.white70, size: 36.0),
-                    SizedBox(height: 12.0),
+                  children: [
+                    Icon(Icons.cloud_upload_outlined, color: context.textColor.withOpacity(0.7), size: 36.0),
+                    const SizedBox(height: 12.0),
                     Text(
                       'Tap to upload files',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: context.textColor,
                         fontSize: 14.0,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    SizedBox(height: 6.0),
-                    Text(
+                    const SizedBox(height: 6.0),
+                    const Text(
                       'PDF, PNG, or JPG (Max 5MB each)',
                       style: TextStyle(
                         color: Color(0xFF8E8E93),
@@ -2613,9 +3007,9 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
       margin: const EdgeInsets.only(bottom: 12.0),
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
       decoration: BoxDecoration(
-        color: const Color(0xFF1C1C1E),
+        color: context.isDark ? const Color(0xFF1C1C1E) : const Color(0xFFFFFFFF),
         borderRadius: BorderRadius.circular(12.0),
-        border: Border.all(color: const Color(0xFF232326)),
+        border: Border.all(color: context.borderCol),
       ),
       child: Row(
         children: [
@@ -2637,8 +3031,8 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
                   fileName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: context.textColor,
                     fontSize: 14.0,
                     fontWeight: FontWeight.bold,
                   ),
@@ -2655,7 +3049,7 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
             ),
           ),
           IconButton(
-            icon: const Icon(Icons.close, color: Colors.white54, size: 20.0),
+            icon: Icon(Icons.close, color: context.textColor.withOpacity(0.5), size: 20.0),
             onPressed: () {
               setState(() {
                 _attachments.remove(filePath);
@@ -2710,9 +3104,9 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
     return Container(
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: const Color(0xFF1C1C1E),
+        color: context.isDark ? const Color(0xFF1C1C1E) : const Color(0xFFE5E5EA),
         borderRadius: BorderRadius.circular(12.0),
-        border: Border.all(color: const Color(0xFF232326)),
+        border: Border.all(color: context.borderCol),
       ),
       child: Stack(
         children: [
@@ -2736,8 +3130,8 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
+                    children: const [
+                      Text(
                         'PRO TIP',
                         style: TextStyle(
                           color: Color(0xFFF2C94C),
@@ -2746,8 +3140,8 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
                           letterSpacing: 0.5,
                         ),
                       ),
-                      const SizedBox(height: 6.0),
-                      const Text(
+                      SizedBox(height: 6.0),
+                      Text(
                         'For faster resolution, ensure your screenshots clearly show the transaction ID and timestamp.',
                         style: TextStyle(
                           color: Color(0xFF8E8E93),
@@ -2785,8 +3179,8 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
                   const SizedBox(height: 6.0),
                   Text(
                     _selectedCategory ?? 'None',
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: context.textColor,
                       fontSize: 18.0,
                       fontWeight: FontWeight.bold,
                     ),
@@ -2839,8 +3233,8 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
         const SizedBox(height: 6.0),
         Text(
           _subjectController.text.isEmpty ? 'No subject provided' : _subjectController.text,
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: context.textColor,
             fontSize: 15.0,
             fontWeight: FontWeight.bold,
           ),
@@ -2853,16 +3247,16 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
           width: double.infinity,
           padding: const EdgeInsets.all(16.0),
           decoration: BoxDecoration(
-            color: const Color(0xFF0F0F11),
+            color: context.isDark ? const Color(0xFF0F0F11) : const Color(0xFFE5E5EA),
             borderRadius: BorderRadius.circular(12.0),
-            border: Border.all(color: const Color(0xFF1C1C1E)),
+            border: Border.all(color: context.borderCol),
           ),
           child: Text(
             _descriptionController.text.isEmpty
                 ? 'No detailed description provided.'
                 : _descriptionController.text,
-            style: const TextStyle(
-              color: Color(0xFFCCCCCC),
+            style: TextStyle(
+              color: context.textColor,
               fontSize: 13.0,
               height: 1.45,
             ),
@@ -2870,7 +3264,7 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
         ),
         const SizedBox(height: 24.0),
 
-        const Divider(color: Color(0xFF232326), height: 1.0),
+        Divider(color: context.borderCol, height: 1.0),
         const SizedBox(height: 20.0),
 
         Row(
@@ -2884,12 +3278,12 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
                   const SizedBox(height: 8.0),
                   Row(
                     children: [
-                      const Icon(Icons.attach_file_rounded, color: Colors.white70, size: 18.0),
+                      Icon(Icons.attach_file_rounded, color: context.textColor.withOpacity(0.7), size: 18.0),
                       const SizedBox(width: 4.0),
                       Text(
                         '${_attachments.length} ${_attachments.length == 1 ? 'File' : 'Files'}',
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: context.textColor,
                           fontSize: 14.0,
                           fontWeight: FontWeight.bold,
                         ),
@@ -2949,9 +3343,9 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
       decoration: BoxDecoration(
-        color: isActive ? color.withOpacity(0.08) : const Color(0xFF1C1C1E),
+        color: isActive ? color.withOpacity(0.08) : (context.isDark ? const Color(0xFF1C1C1E) : const Color(0xFFE5E5EA)),
         borderRadius: BorderRadius.circular(6.0),
-        border: Border.all(color: isActive ? color.withOpacity(0.3) : const Color(0xFF2C2C2E)),
+        border: Border.all(color: isActive ? color.withOpacity(0.3) : context.borderCol),
       ),
       child: Text(
         method,
@@ -2968,9 +3362,9 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
     return Container(
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: const Color(0xFF1C1C1E),
+        color: context.cardBg,
         borderRadius: BorderRadius.circular(16.0),
-        border: Border.all(color: const Color(0xFF232326)),
+        border: Border.all(color: context.borderCol),
       ),
       child: Stack(
         children: [
@@ -2994,11 +3388,11 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: const [
+                    children: [
                       Text(
                         'Guaranteed Response Time',
                         style: TextStyle(
-                          color: Colors.white,
+                          color: context.textColor,
                           fontWeight: FontWeight.bold,
                           fontSize: 13.5,
                         ),
@@ -3024,16 +3418,19 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
   }
 
   Widget _buildSuccessScreen() {
+    final isDark = context.isDark;
+    final textColor = context.textColor;
+    final subTextColor = context.subTextColor;
+
     return Scaffold(
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
+          color: context.scaffoldBg,
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              Color(0xFF0F0F11),
-              Color(0xFF050505),
-            ],
+            colors: context.themeGradients,
+            stops: const [0.0, 0.45, 1.0],
           ),
         ),
         child: SafeArea(
@@ -3049,10 +3446,10 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
                       onPressed: () => Navigator.pop(context),
                     ),
                     const SizedBox(width: 8.0),
-                    const Text(
+                    Text(
                       'Raise a Ticket',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: textColor,
                         fontSize: 22.0,
                         fontWeight: FontWeight.bold,
                         letterSpacing: -0.5,
@@ -3121,17 +3518,17 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
                             ),
                           ),
                           const SizedBox(height: 32.0),
-                          const Text(
+                          Text(
                             'TICKET SUBMITTED!',
                             style: TextStyle(
-                              color: Colors.white,
+                              color: textColor,
                               fontSize: 26.0,
                               fontWeight: FontWeight.bold,
                               letterSpacing: 0.5,
                             ),
                           ),
                           const SizedBox(height: 12.0),
-                          const Text(
+                          Text(
                             'team will get back to you within\n4-8 hours',
                             textAlign: TextAlign.center,
                             style: TextStyle(
@@ -3145,9 +3542,9 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
                             width: double.infinity,
                             padding: const EdgeInsets.symmetric(vertical: 24.0),
                             decoration: BoxDecoration(
-                              color: const Color(0xFF141416),
+                              color: context.cardBg,
                               borderRadius: BorderRadius.circular(16.0),
-                              border: Border.all(color: const Color(0xFF232326)),
+                              border: Border.all(color: context.borderCol),
                             ),
                             child: Column(
                               children: [
@@ -3306,10 +3703,10 @@ class _RaiseTicketScreenState extends State<RaiseTicketScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 12.0),
           decoration: BoxDecoration(
-            color: isSelected ? color.withOpacity(0.08) : const Color(0xFF1C1C1E),
+            color: isSelected ? color.withOpacity(0.08) : (context.isDark ? const Color(0xFF1C1C1E) : const Color(0xFFE5E5EA)),
             borderRadius: BorderRadius.circular(20.0),
             border: Border.all(
-              color: isSelected ? color : const Color(0xFF2C2C2E),
+              color: isSelected ? color : context.borderCol,
               width: 1.25,
             ),
           ),
@@ -3390,64 +3787,178 @@ class SupportCenterScreen extends StatefulWidget {
 }
 
 class _SupportCenterScreenState extends State<SupportCenterScreen> {
+  bool get _isDark => context.isDark;
   String _selectedTopic = 'Payments'; // Payments, Technicals, Community
   List<Map<String, dynamic>> get _myTickets => TrackTicketsScreen.allTickets;
 
-  List<Map<String, dynamic>> _getHelpTopics() {
-    if (_selectedTopic == 'Payments') {
-      return [
-        {
-          'title': 'Subscription & Billing',
-          'icon': Icons.account_balance_wallet_outlined,
-        },
-        {
-          'title': 'Invoice & GST Inquiries',
-          'icon': Icons.receipt_long_outlined,
-        },
-        {
-          'title': 'Refund Policy & Status',
-          'icon': Icons.assignment_return_outlined,
-        },
-      ];
-    } else if (_selectedTopic == 'Technicals') {
-      return [
-        {
-          'title': 'Course Access & Recordings',
-          'icon': Icons.play_circle_outline_rounded,
-        },
-        {
-          'title': 'Login & Password Issues',
-          'icon': Icons.lock_outline_rounded,
-        },
-        {
-          'title': 'Video Player Lagging',
-          'icon': Icons.videocam_outlined,
-        },
-      ];
-    } else {
-      return [
-        {
-          'title': 'Account Privacy & Security',
-          'icon': Icons.shield_outlined,
-        },
-        {
-          'title': 'Community Group Rules',
-          'icon': Icons.groups_outlined,
-        },
-        {
-          'title': 'Reporting Spam or Abuse',
-          'icon': Icons.report_problem_outlined,
-        },
-      ];
+  bool _isLoading = true;
+  String? _whatsappNumber;
+  String? _phoneNumber;
+  String? _supportTiming;
+
+  List<Map<String, dynamic>> _categories = [];
+  List<Map<String, dynamic>> _faqs = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSupportData();
+  }
+
+  Future<void> _loadSupportData() async {
+    if (!mounted) return;
+    setState(() {
+      _isLoading = true;
+    });
+    try {
+      final settings = await SupportService.instance.fetchSettings();
+      final categories = await SupportService.instance.fetchCategories();
+
+      if (mounted) {
+        setState(() {
+          if (settings != null) {
+            _whatsappNumber = settings['whatsappNumber'] as String?;
+            _phoneNumber = settings['phoneNumber'] as String?;
+            _supportTiming = settings['supportTiming'] as String?;
+          }
+          if (categories.isNotEmpty) {
+            _categories = categories;
+            final currentExists = categories.any((c) => c['name'] == _selectedTopic);
+            if (!currentExists) {
+              _selectedTopic = categories[0]['name'] as String;
+            }
+          }
+        });
+
+        if (_categories.isNotEmpty) {
+          final activeCat = _categories.firstWhere((c) => c['name'] == _selectedTopic, orElse: () => _categories[0]);
+          await _loadFaqsForCategory(activeCat['id'] as String);
+        } else {
+          setState(() {
+            _isLoading = false;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading support data: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
+  Future<void> _loadFaqsForCategory(String categoryId) async {
+    try {
+      final faqs = await SupportService.instance.fetchFaqs(categoryId: categoryId);
+      if (mounted) {
+        setState(() {
+          _faqs = faqs;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading FAQs: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
 
+  IconData _mapCategoryIcon(String categoryName) {
+    final name = categoryName.toLowerCase();
+    if (name.contains('payment') || name.contains('bill') || name.contains('subscription')) {
+      return Icons.account_balance_wallet_outlined;
+    }
+    if (name.contains('tech') || name.contains('support') || name.contains('login') || name.contains('lag') || name.contains('record')) {
+      return Icons.play_circle_outline_rounded;
+    }
+    if (name.contains('comm') || name.contains('group') || name.contains('rule') || name.contains('spam')) {
+      return Icons.groups_outlined;
+    }
+    return Icons.help_outline_rounded;
+  }
+
+  void _showFaqDetails(Map<String, dynamic> faq) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: context.cardBg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24.0)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 12.0),
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2C2C2E),
+                      borderRadius: BorderRadius.circular(2.0),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24.0),
+                Text(
+                  faq['question'] ?? '',
+                  style: TextStyle(
+                    color: context.textColor,
+                    fontSize: 16.0,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 16.0),
+                Text(
+                  faq['answer'] ?? '',
+                  style: TextStyle(
+                    color: context.subTextColor,
+                    fontSize: 14.0,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 24.0),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _launchPhoneDialer() async {
+    final number = _phoneNumber?.trim();
+    Navigator.pop(context);
+
+    if (number == null || number.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Support phone number is not available right now.')),
+      );
+      return;
+    }
+
+    final uri = Uri(scheme: 'tel', path: number);
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open the phone dialer.')),
+      );
+    }
+  }
 
   void _showCallUsBottomSheet() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF0F0F11),
+      backgroundColor: context.cardBg,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24.0)),
       ),
@@ -3460,18 +3971,22 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
               Container(width: 40, height: 4, decoration: BoxDecoration(color: const Color(0xFF2C2C2E), borderRadius: BorderRadius.circular(2.0))),
               const SizedBox(height: 24.0),
               const Text('Contact Elite Support Helpline', style: TextStyle(color: Colors.white, fontSize: 16.0, fontWeight: FontWeight.bold)),
+              if (_supportTiming != null && _supportTiming!.isNotEmpty) ...[
+                const SizedBox(height: 4.0),
+                Text(_supportTiming!, style: const TextStyle(color: Color(0xFF8E8E93), fontSize: 12.0)),
+              ],
               const SizedBox(height: 20.0),
               ListTile(
                 leading: const Icon(Icons.phone_rounded, color: Color(0xFF27AE60)),
                 title: const Text('Call Helpline (Toll-Free)', style: TextStyle(color: Colors.white)),
-                subtitle: const Text('1800 309 4820', style: TextStyle(color: Color(0xFF8E8E93))),
-                onTap: () => Navigator.pop(context),
+                subtitle: Text(_phoneNumber ?? '1800 309 4820', style: const TextStyle(color: Color(0xFF8E8E93))),
+                onTap: _launchPhoneDialer,
               ),
               const Divider(color: Color(0xFF2C2C2E)),
               ListTile(
                 leading: const Icon(Icons.message_rounded, color: Color(0xFF2F80ED)),
                 title: const Text('Chat on WhatsApp Support', style: TextStyle(color: Colors.white)),
-                subtitle: const Text('+91 94444 88888', style: TextStyle(color: Color(0xFF8E8E93))),
+                subtitle: Text(_whatsappNumber ?? '+91 94444 88888', style: const TextStyle(color: Color(0xFF8E8E93))),
                 onTap: () => Navigator.pop(context),
               ),
               const SizedBox(height: 24.0),
@@ -3482,18 +3997,167 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
     );
   }
 
+  void _showFeedbackSheet() {
+    final messageController = TextEditingController();
+    int rating = 0;
+    bool isSubmitting = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: context.cardBg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24.0)),
+      ),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
+                left: 24,
+                right: 24,
+                top: 20,
+              ),
+              child: SafeArea(
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 40,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF2C2C2E),
+                            borderRadius: BorderRadius.circular(2.0),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 24.0),
+                      Text(
+                        'Send Feedback',
+                        style: TextStyle(
+                          color: context.textColor,
+                          fontSize: 18.0,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 16.0),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: List.generate(5, (i) {
+                          final filled = i < rating;
+                          return IconButton(
+                            icon: Icon(
+                              filled ? Icons.star_rounded : Icons.star_border_rounded,
+                              color: const Color(0xFFFFD97D),
+                              size: 32.0,
+                            ),
+                            onPressed: () => setSheetState(() => rating = i + 1),
+                          );
+                        }),
+                      ),
+                      const SizedBox(height: 8.0),
+                      TextField(
+                        controller: messageController,
+                        maxLines: 4,
+                        style: TextStyle(color: context.textColor),
+                        decoration: InputDecoration(
+                          hintText: 'Tell us what you think...',
+                          hintStyle: TextStyle(color: context.subTextColor),
+                          filled: true,
+                          fillColor: context.scaffoldBg,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12.0),
+                            borderSide: BorderSide(color: context.borderCol),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 20.0),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFD30814),
+                            padding: const EdgeInsets.symmetric(vertical: 14.0),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12.0),
+                            ),
+                          ),
+                          onPressed: isSubmitting
+                              ? null
+                              : () async {
+                                  final message = messageController.text.trim();
+                                  if (message.isEmpty) {
+                                    ScaffoldMessenger.of(sheetContext).showSnackBar(
+                                      const SnackBar(
+                                          content: Text('Please enter your feedback message.')),
+                                    );
+                                    return;
+                                  }
+                                  setSheetState(() => isSubmitting = true);
+                                  try {
+                                    await SupportService.instance.submitFeedback(
+                                      message: message,
+                                      rating: rating > 0 ? rating : null,
+                                    );
+                                    if (!mounted) return;
+                                    Navigator.pop(sheetContext);
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Thank you for your feedback! 🙏'),
+                                        backgroundColor: Color(0xFF27AE60),
+                                      ),
+                                    );
+                                  } catch (e) {
+                                    setSheetState(() => isSubmitting = false);
+                                    if (!mounted) return;
+                                    ScaffoldMessenger.of(sheetContext).showSnackBar(
+                                      const SnackBar(
+                                          content: Text('Could not submit feedback. Please try again.')),
+                                    );
+                                  }
+                                },
+                          child: isSubmitting
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2.0, color: Colors.white),
+                                )
+                              : const Text('Submit Feedback',
+                                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                      const SizedBox(height: 24.0),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isDark = context.isDark;
+    final textColor = context.textColor;
+    final subTextColor = context.subTextColor;
+
     return Scaffold(
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
+          color: context.scaffoldBg,
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              Color(0xFF0F0F11),
-              Color(0xFF050505),
-            ],
+            colors: context.themeGradients,
+            stops: const [0.0, 0.45, 1.0],
           ),
         ),
         child: SafeArea(
@@ -3506,14 +4170,14 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
                 child: Row(
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.arrow_back, color: Color(0xFFD30814), size: 24.0),
+                      icon: Icon(Icons.arrow_back, color: isDark ? const Color(0xFFFCA5A5) : const Color(0xFFD30814), size: 24.0),
                       onPressed: () => Navigator.pop(context),
                     ),
                     const SizedBox(width: 8.0),
-                    const Text(
+                    Text(
                       'Support Center',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: textColor,
                         fontSize: 22.0,
                         fontWeight: FontWeight.bold,
                         letterSpacing: -0.5,
@@ -3554,380 +4218,463 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
 
               // Scrollable Support Page Content
               Expanded(
-                child: SingleChildScrollView(
-                  physics: const BouncingScrollPhysics(),
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-                  child: Center(
-                    child: Container(
-                      constraints: const BoxConstraints(maxWidth: 500),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Help Banner Hero Card
-                          Container(
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF141416),
-                              borderRadius: BorderRadius.circular(16.0),
-                            ),
-                            clipBehavior: Clip.antiAlias,
-                            child: Stack(
-                              children: [
-                                Positioned(
-                                  left: 0,
-                                  top: 0,
-                                  bottom: 0,
-                                  width: 4.0,
-                                  child: Container(color: const Color(0xFFD30814)),
-                                ),
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 24.0),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: const Text(
-                                          'How can we help\nyou?',
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 18.0,
-                                            fontWeight: FontWeight.bold,
-                                            height: 1.25,
+                child: RefreshIndicator(
+                  onRefresh: _loadSupportData,
+                  color: const Color(0xFFD30814),
+                  child: SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+                    child: Center(
+                      child: Container(
+                        constraints: const BoxConstraints(maxWidth: 500),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Help Banner Hero Card
+                            Container(
+                              decoration: BoxDecoration(
+                                color: context.cardBg,
+                                borderRadius: BorderRadius.circular(16.0),
+                                border: Border.all(color: context.borderCol),
+                              ),
+                              clipBehavior: Clip.antiAlias,
+                              child: Stack(
+                                children: [
+                                  Positioned(
+                                    left: 0,
+                                    top: 0,
+                                    bottom: 0,
+                                    width: 4.0,
+                                    child: Container(color: const Color(0xFFD30814)),
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 24.0),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            'How can we help\nyou?',
+                                            style: TextStyle(
+                                              color: textColor,
+                                              fontSize: 18.0,
+                                              fontWeight: FontWeight.bold,
+                                              height: 1.25,
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFF27AE60).withOpacity(0.08),
-                                          borderRadius: BorderRadius.circular(20.0),
-                                          border: Border.all(color: const Color(0xFF27AE60).withOpacity(0.2)),
-                                        ),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Container(
-                                              width: 8,
-                                              height: 8,
-                                              decoration: const BoxDecoration(
-                                                color: Color(0xFF27AE60),
-                                                shape: BoxShape.circle,
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF27AE60).withOpacity(0.08),
+                                            borderRadius: BorderRadius.circular(20.0),
+                                            border: Border.all(color: const Color(0xFF27AE60).withOpacity(0.2)),
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Container(
+                                                width: 8,
+                                                height: 8,
+                                                decoration: const BoxDecoration(
+                                                  color: Color(0xFF27AE60),
+                                                  shape: BoxShape.circle,
+                                                ),
                                               ),
-                                            ),
-                                            const SizedBox(width: 8.0),
-                                            const Text(
-                                              'SUPPORT\nONLINE',
-                                              style: TextStyle(
-                                                color: Color(0xFF27AE60),
-                                                fontSize: 9.0,
-                                                fontWeight: FontWeight.bold,
-                                                height: 1.1,
+                                              const SizedBox(width: 8.0),
+                                              const Text(
+                                                'SUPPORT\nONLINE',
+                                                style: TextStyle(
+                                                  color: Color(0xFF27AE60),
+                                                  fontSize: 9.0,
+                                                  fontWeight: FontWeight.bold,
+                                                  height: 1.1,
+                                                ),
                                               ),
-                                            ),
-                                          ],
+                                            ],
+                                          ),
                                         ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 28.0),
+
+                            // Quick Actions Row
+                            _buildSectionHeader('QUICK ACTIONS'),
+                            const SizedBox(height: 12.0),
+                            Row(
+                              children: [
+                                // Card 1: Raise Ticket
+                                Expanded(
+                                  child: InkWell(
+                                    onTap: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) => RaiseTicketScreen(
+                                            onTicketCreated: (newTicket) {
+                                              setState(() {
+                                                _myTickets.insert(0, newTicket);
+                                              });
+                                              ScaffoldMessenger.of(context).showSnackBar(
+                                                const SnackBar(
+                                                  content: Text('Ticket created successfully! 🎫'),
+                                                  backgroundColor: Color(0xFF27AE60),
+                                                ),
+                                              );
+                                            },
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    borderRadius: BorderRadius.circular(16.0),
+                                    child: Container(
+                                      padding: const EdgeInsets.all(20.0),
+                                      decoration: BoxDecoration(
+                                        color: context.cardBg,
+                                        borderRadius: BorderRadius.circular(16.0),
+                                        border: Border.all(color: context.borderCol),
                                       ),
-                                    ],
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Container(
+                                            padding: const EdgeInsets.all(12.0),
+                                            decoration: BoxDecoration(
+                                              color: const Color(0xFFD30814).withOpacity(0.08),
+                                              borderRadius: BorderRadius.circular(12.0),
+                                              border: Border.all(color: const Color(0xFFD30814).withOpacity(0.2)),
+                                            ),
+                                            child: const Icon(Icons.confirmation_num_outlined, color: Color(0xFFD30814), size: 24.0),
+                                          ),
+                                          const SizedBox(height: 20.0),
+                                          Text(
+                                            'Raise Ticket',
+                                            style: TextStyle(
+                                              color: textColor,
+                                              fontSize: 14.5,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 16.0),
+                                // Card 2: Call Us
+                                Expanded(
+                                  child: InkWell(
+                                    onTap: _showCallUsBottomSheet,
+                                    borderRadius: BorderRadius.circular(16.0),
+                                    child: Container(
+                                      padding: const EdgeInsets.all(20.0),
+                                      decoration: BoxDecoration(
+                                        color: context.cardBg,
+                                        borderRadius: BorderRadius.circular(16.0),
+                                        border: Border.all(color: context.borderCol),
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Container(
+                                            padding: const EdgeInsets.all(12.0),
+                                            decoration: BoxDecoration(
+                                              color: const Color(0xFFD30814).withOpacity(0.08),
+                                              borderRadius: BorderRadius.circular(12.0),
+                                              border: Border.all(color: const Color(0xFFD30814).withOpacity(0.2)),
+                                            ),
+                                            child: const Icon(Icons.phone_in_talk_outlined, color: Color(0xFFD30814), size: 24.0),
+                                          ),
+                                          const SizedBox(height: 20.0),
+                                          Text(
+                                            'Call Us',
+                                            style: TextStyle(
+                                              color: textColor,
+                                              fontSize: 14.5,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 16.0),
+                                // Card 3: Feedback
+                                Expanded(
+                                  child: InkWell(
+                                    onTap: _showFeedbackSheet,
+                                    borderRadius: BorderRadius.circular(16.0),
+                                    child: Container(
+                                      padding: const EdgeInsets.all(20.0),
+                                      decoration: BoxDecoration(
+                                        color: context.cardBg,
+                                        borderRadius: BorderRadius.circular(16.0),
+                                        border: Border.all(color: context.borderCol),
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Container(
+                                            padding: const EdgeInsets.all(12.0),
+                                            decoration: BoxDecoration(
+                                              color: const Color(0xFFD30814).withOpacity(0.08),
+                                              borderRadius: BorderRadius.circular(12.0),
+                                              border: Border.all(color: const Color(0xFFD30814).withOpacity(0.2)),
+                                            ),
+                                            child: const Icon(Icons.rate_review_outlined, color: Color(0xFFD30814), size: 24.0),
+                                          ),
+                                          const SizedBox(height: 20.0),
+                                          Text(
+                                            'Feedback',
+                                            style: TextStyle(
+                                              color: textColor,
+                                              fontSize: 14.5,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ],
                             ),
-                          ),
-                          const SizedBox(height: 28.0),
+                            const SizedBox(height: 28.0),
 
-                          // Quick Actions Row
-                          _buildSectionHeader('QUICK ACTIONS'),
-                          const SizedBox(height: 12.0),
-                          Row(
-                            children: [
-                              // Card 1: Raise Ticket
-                              Expanded(
-                                child: InkWell(
+                            // Browse Help Topics
+                            _buildSectionHeader('BROWSE HELP TOPICS'),
+                            const SizedBox(height: 12.0),
+                            // Horizontal chips
+                            SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              physics: const BouncingScrollPhysics(),
+                              child: Row(
+                                children: (_categories.isNotEmpty
+                                        ? _categories.map((c) => c['name'] as String).toList()
+                                        : ['Payments', 'Technicals', 'Community'])
+                                    .map((topic) {
+                                  final isSelected = _selectedTopic == topic;
+                                  return GestureDetector(
+                                    onTap: () {
+                                      setState(() {
+                                        _selectedTopic = topic;
+                                      });
+                                      if (_categories.isNotEmpty) {
+                                        final cat = _categories.firstWhere((c) => c['name'] == topic);
+                                        _loadFaqsForCategory(cat['id'] as String);
+                                      }
+                                    },
+                                    child: Container(
+                                      margin: const EdgeInsets.only(right: 12.0),
+                                      padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 10.0),
+                                      decoration: BoxDecoration(
+                                        color: context.cardBg,
+                                        borderRadius: BorderRadius.circular(20.0),
+                                        border: Border.all(
+                                          color: isSelected ? const Color(0xFFD30814) : context.borderCol,
+                                          width: 1.0,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        topic,
+                                        style: TextStyle(
+                                          color: isSelected ? textColor : subTextColor,
+                                          fontSize: 13.0,
+                                          fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                            ),
+                            const SizedBox(height: 16.0),
+
+                            // Help Topics List
+                            _isLoading
+                                ? const Center(
+                                    child: Padding(
+                                      padding: EdgeInsets.symmetric(vertical: 24.0),
+                                      child: CircularProgressIndicator(color: Color(0xFFD30814)),
+                                    ),
+                                  )
+                                : _faqs.isEmpty
+                                    ? Padding(
+                                        padding: const EdgeInsets.symmetric(vertical: 24.0),
+                                        child: Center(
+                                          child: Text(
+                                            'No FAQs available in this topic yet.',
+                                            style: TextStyle(color: subTextColor, fontSize: 13.5),
+                                          ),
+                                        ),
+                                      )
+                                    : Column(
+                                    children: _faqs.map((faq) => {
+                                              'title': faq['question'],
+                                              'icon': _mapCategoryIcon(_selectedTopic),
+                                              'answer': faq['answer'],
+                                              'isFaq': true,
+                                              'raw': faq,
+                                            }).toList()
+                                        .map((help) {
+                                      return InkWell(
+                                        onTap: () {
+                                          if (help['isFaq'] == true) {
+                                            _showFaqDetails(help['raw'] as Map<String, dynamic>);
+                                          }
+                                        },
+                                        borderRadius: BorderRadius.circular(16.0),
+                                        child: Container(
+                                          margin: const EdgeInsets.only(bottom: 12.0),
+                                          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 18.0),
+                                          decoration: BoxDecoration(
+                                            color: context.cardBg,
+                                            borderRadius: BorderRadius.circular(16.0),
+                                            border: Border.all(color: context.borderCol),
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              Icon(help['icon'] as IconData, color: isDark ? const Color(0xFFFFD4AF).withOpacity(0.85) : const Color(0xFFD30814), size: 20.0),
+                                              const SizedBox(width: 16.0),
+                                              Expanded(
+                                                child: Text(
+                                                  help['title'] as String,
+                                                  style: TextStyle(
+                                                    color: textColor,
+                                                    fontSize: 14.5,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ),
+                                              Icon(Icons.arrow_forward_ios_rounded, color: textColor.withOpacity(0.5), size: 14.0),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    }).toList(),
+                                  ),
+                            const SizedBox(height: 28.0),
+
+                            // My Recent Tickets Row Header
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                _buildSectionHeader('MY RECENT TICKETS'),
+                                GestureDetector(
                                   onTap: () {
                                     Navigator.push(
                                       context,
                                       MaterialPageRoute(
-                                        builder: (context) => RaiseTicketScreen(
-                                          onTicketCreated: (newTicket) {
-                                            setState(() {
-                                              _myTickets.insert(0, newTicket);
-                                            });
-                                            ScaffoldMessenger.of(context).showSnackBar(
-                                              const SnackBar(
-                                                content: Text('Ticket created successfully! 🎫'),
-                                                backgroundColor: Color(0xFF27AE60),
-                                              ),
-                                            );
-                                          },
-                                        ),
+                                        builder: (context) => const TrackTicketsScreen(),
                                       ),
                                     );
                                   },
-                                  borderRadius: BorderRadius.circular(16.0),
-                                  child: Container(
-                                    padding: const EdgeInsets.all(20.0),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF141416),
-                                      borderRadius: BorderRadius.circular(16.0),
-                                      border: Border.all(color: const Color(0xFF232326)),
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Container(
-                                          padding: const EdgeInsets.all(12.0),
-                                          decoration: BoxDecoration(
-                                            color: const Color(0xFFD30814).withOpacity(0.08),
-                                            borderRadius: BorderRadius.circular(12.0),
-                                            border: Border.all(color: const Color(0xFFD30814).withOpacity(0.2)),
-                                          ),
-                                          child: const Icon(Icons.confirmation_num_outlined, color: Color(0xFFD30814), size: 24.0),
-                                        ),
-                                        const SizedBox(height: 20.0),
-                                        const Text(
-                                          'Raise Ticket',
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 14.5,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ],
+                                  child: const Text(
+                                    'VIEW ALL',
+                                    style: TextStyle(
+                                      color: Color(0xFFD30814),
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.bold,
+                                      letterSpacing: 0.5,
                                     ),
                                   ),
                                 ),
-                              ),
-                              const SizedBox(width: 16.0),
-                              // Card 2: Call Us
-                              Expanded(
-                                child: InkWell(
-                                  onTap: _showCallUsBottomSheet,
-                                  borderRadius: BorderRadius.circular(16.0),
-                                  child: Container(
-                                    padding: const EdgeInsets.all(20.0),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF141416),
-                                      borderRadius: BorderRadius.circular(16.0),
-                                      border: Border.all(color: const Color(0xFF232326)),
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Container(
-                                          padding: const EdgeInsets.all(12.0),
-                                          decoration: BoxDecoration(
-                                            color: const Color(0xFFD30814).withOpacity(0.08),
-                                            borderRadius: BorderRadius.circular(12.0),
-                                            border: Border.all(color: const Color(0xFFD30814).withOpacity(0.2)),
-                                          ),
-                                          child: const Icon(Icons.phone_in_talk_outlined, color: Color(0xFFD30814), size: 24.0),
-                                        ),
-                                        const SizedBox(height: 20.0),
-                                        const Text(
-                                          'Call Us',
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 14.5,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 28.0),
+                              ],
+                            ),
+                            const SizedBox(height: 12.0),
 
-                          // Browse Help Topics
-                          _buildSectionHeader('BROWSE HELP TOPICS'),
-                          const SizedBox(height: 12.0),
-                          // Horizontal chips
-                          SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            physics: const BouncingScrollPhysics(),
-                            child: Row(
-                              children: ['Payments', 'Technicals', 'Community'].map((topic) {
-                                final isSelected = _selectedTopic == topic;
+                            // Recent Tickets List
+                            Column(
+                              children: _myTickets.map((ticket) {
                                 return GestureDetector(
                                   onTap: () {
-                                    setState(() {
-                                      _selectedTopic = topic;
-                                    });
+                                    final selected = {
+                                      'id': ticket['id'],
+                                      'title': ticket['title'],
+                                      'status': ticket['status'],
+                                      'statusColor': ticket['statusColor'],
+                                      'category': ticket['id'] == '#TBT-2048'
+                                          ? 'BILLING & PAYMENTS'
+                                          : 'TECHNICAL SUPPORT',
+                                      'description': ticket['title'],
+                                    };
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => TrackTicketsScreen(initialTicket: selected),
+                                      ),
+                                    );
                                   },
                                   child: Container(
-                                    margin: const EdgeInsets.only(right: 12.0),
-                                    padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 10.0),
+                                    margin: const EdgeInsets.only(bottom: 12.0),
+                                    padding: const EdgeInsets.all(16.0),
                                     decoration: BoxDecoration(
-                                      color: const Color(0xFF141416),
-                                      borderRadius: BorderRadius.circular(20.0),
-                                      border: Border.all(
-                                        color: isSelected ? const Color(0xFFD30814) : const Color(0xFF2C2C2E),
-                                        width: 1.0,
-                                      ),
+                                      color: context.cardBg,
+                                      borderRadius: BorderRadius.circular(16.0),
+                                      border: Border.all(color: context.borderCol),
                                     ),
-                                    child: Text(
-                                      topic,
-                                      style: TextStyle(
-                                        color: isSelected ? Colors.white : const Color(0xFF8E8E93),
-                                        fontSize: 13.0,
-                                        fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-                                      ),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.all(12.0),
+                                          decoration: BoxDecoration(
+                                            color: isDark ? const Color(0xFF1C1C1E) : const Color(0xFFE5E5EA),
+                                            borderRadius: BorderRadius.circular(12.0),
+                                          ),
+                                          child: Icon(Icons.description_outlined, color: textColor.withOpacity(0.7), size: 20.0),
+                                        ),
+                                        const SizedBox(width: 16.0),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                ticket['id'],
+                                                style: TextStyle(
+                                                  color: textColor,
+                                                  fontSize: 14.5,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 4.0),
+                                              Text(
+                                                ticket['title'],
+                                                style: TextStyle(
+                                                  color: subTextColor,
+                                                  fontSize: 12.0,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 6.0),
+                                          decoration: BoxDecoration(
+                                            color: ticket['statusColor'].withOpacity(0.06),
+                                            borderRadius: BorderRadius.circular(16.0),
+                                            border: Border.all(color: ticket['statusColor'].withOpacity(0.35)),
+                                          ),
+                                          child: Text(
+                                            ticket['status'],
+                                            style: TextStyle(
+                                              color: ticket['statusColor'],
+                                              fontSize: 10.0,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 );
                               }).toList(),
                             ),
-                          ),
-                          const SizedBox(height: 16.0),
-
-                          // Help Topics List
-                          Column(
-                            children: _getHelpTopics().map((help) {
-                              return Container(
-                                margin: const EdgeInsets.only(bottom: 12.0),
-                                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 18.0),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF141416),
-                                  borderRadius: BorderRadius.circular(16.0),
-                                  border: Border.all(color: const Color(0xFF232326)),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Icon(help['icon'], color: const Color(0xFFFFD4AF).withOpacity(0.85), size: 20.0),
-                                    const SizedBox(width: 16.0),
-                                    Expanded(
-                                      child: Text(
-                                        help['title'],
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 14.5,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ),
-                                    const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white54, size: 14.0),
-                                  ],
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                          const SizedBox(height: 28.0),
-
-                          // My Recent Tickets Row Header
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              _buildSectionHeader('MY RECENT TICKETS'),
-                              GestureDetector(
-                                onTap: () {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) => const TrackTicketsScreen(),
-                                    ),
-                                  );
-                                },
-                                child: const Text(
-                                  'VIEW ALL',
-                                  style: TextStyle(
-                                    color: Color(0xFFD30814),
-                                    fontSize: 11.5,
-                                    fontWeight: FontWeight.bold,
-                                    letterSpacing: 0.5,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12.0),
-
-                          // Recent Tickets List
-                          Column(
-                            children: _myTickets.map((ticket) {
-                              return GestureDetector(
-                                onTap: () {
-                                  final selected = {
-                                    'id': ticket['id'],
-                                    'title': ticket['title'],
-                                    'status': ticket['status'],
-                                    'statusColor': ticket['statusColor'],
-                                    'category': ticket['id'] == '#TBT-2048'
-                                        ? 'BILLING & PAYMENTS'
-                                        : 'TECHNICAL SUPPORT',
-                                    'description': ticket['title'],
-                                  };
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) => TrackTicketsScreen(initialTicket: selected),
-                                    ),
-                                  );
-                                },
-                                child: Container(
-                                  margin: const EdgeInsets.only(bottom: 12.0),
-                                  padding: const EdgeInsets.all(16.0),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF141416),
-                                    borderRadius: BorderRadius.circular(16.0),
-                                    border: Border.all(color: const Color(0xFF232326)),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Container(
-                                        padding: const EdgeInsets.all(12.0),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFF1C1C1E),
-                                          borderRadius: BorderRadius.circular(12.0),
-                                        ),
-                                        child: const Icon(Icons.description_outlined, color: Colors.white70, size: 20.0),
-                                      ),
-                                      const SizedBox(width: 16.0),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              ticket['id'],
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 14.5,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
-                                            const SizedBox(height: 4.0),
-                                            Text(
-                                              ticket['title'],
-                                              style: const TextStyle(
-                                                color: Color(0xFF8E8E93),
-                                                fontSize: 12.0,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 6.0),
-                                        decoration: BoxDecoration(
-                                          color: ticket['statusColor'].withOpacity(0.06),
-                                          borderRadius: BorderRadius.circular(16.0),
-                                          border: Border.all(color: ticket['statusColor'].withOpacity(0.35)),
-                                        ),
-                                        child: Text(
-                                          ticket['status'],
-                                          style: TextStyle(
-                                            color: ticket['statusColor'],
-                                            fontSize: 10.0,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -4349,18 +5096,19 @@ class _TrackTicketsScreenState extends State<TrackTicketsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = context.isDark;
+    final textColor = context.textColor;
+    final subTextColor = context.subTextColor;
+
     return Scaffold(
-      backgroundColor: const Color(0xFF0F0F11),
-      resizeToAvoidBottomInset: true,
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
+          color: context.scaffoldBg,
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              Color(0xFF0F0F11),
-              Color(0xFF050505),
-            ],
+            colors: context.themeGradients,
+            stops: const [0.0, 0.45, 1.0],
           ),
         ),
         child: SafeArea(
@@ -4397,10 +5145,10 @@ class _TrackTicketsScreenState extends State<TrackTicketsScreen> {
             onPressed: () => Navigator.pop(context),
           ),
           const SizedBox(width: 8.0),
-          const Text(
+          Text(
             'TBT Support',
             style: TextStyle(
-              color: Colors.white,
+              color: context.textColor,
               fontSize: 18.0,
               fontWeight: FontWeight.bold,
             ),
@@ -4463,7 +5211,7 @@ class _TrackTicketsScreenState extends State<TrackTicketsScreen> {
         // Divider
         Container(
           width: 1,
-          color: const Color(0xFF232326),
+          color: context.borderCol,
         ),
         // Right Panel (Active Ticket Chat)
         Expanded(
@@ -4506,10 +5254,10 @@ class _TrackTicketsScreenState extends State<TrackTicketsScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          const Text(
+          Text(
             'My Tickets',
             style: TextStyle(
-              color: Colors.white,
+              color: context.textColor,
               fontSize: 22.0,
               fontWeight: FontWeight.bold,
             ),
@@ -4592,18 +5340,18 @@ class _TrackTicketsScreenState extends State<TrackTicketsScreen> {
               label: Text(
                 filter,
                 style: TextStyle(
-                  color: isActive ? Colors.white : const Color(0xFF8E8E93),
+                  color: isActive ? Colors.white : context.subTextColor,
                   fontSize: 12.0,
                   fontWeight: FontWeight.bold,
                 ),
               ),
               selected: isActive,
               selectedColor: const Color(0xFFD30814),
-              backgroundColor: const Color(0xFF1C1C1E),
+              backgroundColor: context.cardBg,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16.0),
                 side: BorderSide(
-                  color: isActive ? const Color(0xFFD30814) : const Color(0xFF2C2C2E),
+                  color: isActive ? const Color(0xFFD30814) : context.borderCol,
                 ),
               ),
               onSelected: (selected) {
@@ -4641,7 +5389,7 @@ class _TrackTicketsScreenState extends State<TrackTicketsScreen> {
                   Container(
                     padding: const EdgeInsets.all(8.0),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF1C1C1E),
+                      color: context.isDark ? const Color(0xFF1C1C1E) : const Color(0xFFE5E5EA),
                       borderRadius: BorderRadius.circular(10.0),
                     ),
                     child: Icon(
@@ -4650,7 +5398,7 @@ class _TrackTicketsScreenState extends State<TrackTicketsScreen> {
                           : ticket['category'] == 'COURSE ACCESS'
                               ? Icons.school_outlined
                               : Icons.settings_outlined,
-                      color: isActive ? const Color(0xFFD30814) : Colors.white70,
+                      color: isActive ? const Color(0xFFD30814) : context.subTextColor,
                       size: 20.0,
                     ),
                   ),
@@ -4673,8 +5421,8 @@ class _TrackTicketsScreenState extends State<TrackTicketsScreen> {
                           ticket['title'],
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: context.textColor,
                             fontSize: 13.0,
                             fontWeight: FontWeight.bold,
                           ),
@@ -4745,10 +5493,10 @@ class _TrackTicketsScreenState extends State<TrackTicketsScreen> {
             ? const EdgeInsets.only(right: 12.0, bottom: 8.0, top: 4.0)
             : const EdgeInsets.only(bottom: 12.0),
         decoration: BoxDecoration(
-          color: const Color(0xFF141416),
+          color: context.cardBg,
           borderRadius: BorderRadius.circular(16.0),
           border: Border.all(
-            color: isActive ? const Color(0xFFD30814).withOpacity(0.5) : const Color(0xFF232326),
+            color: isActive ? const Color(0xFFD30814).withOpacity(0.5) : context.borderCol,
             width: isActive ? 1.5 : 1.0,
           ),
         ),
@@ -4801,8 +5549,8 @@ class _TrackTicketsScreenState extends State<TrackTicketsScreen> {
                     const SizedBox(height: 6.0),
                     Text(
                       active['fullTitle'] ?? active['title'],
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: context.textColor,
                         fontSize: 18.0,
                         fontWeight: FontWeight.bold,
                         height: 1.2,
@@ -4820,13 +5568,13 @@ class _TrackTicketsScreenState extends State<TrackTicketsScreen> {
             margin: const EdgeInsets.symmetric(vertical: 8.0),
             padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 6.0),
             decoration: BoxDecoration(
-              color: const Color(0xFF1C1C1E),
+              color: context.isDark ? const Color(0xFF1C1C1E) : const Color(0xFFE5E5EA),
               borderRadius: BorderRadius.circular(20.0),
             ),
-            child: const Text(
+            child: Text(
               'TICKET CREATED - OCT 12, 10:24 AM',
               style: TextStyle(
-                color: Color(0xFF8E8E93),
+                color: context.subTextColor,
                 fontSize: 9.0,
                 fontWeight: FontWeight.bold,
               ),
@@ -4911,7 +5659,7 @@ class _TrackTicketsScreenState extends State<TrackTicketsScreen> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
                   decoration: BoxDecoration(
-                    color: isUser ? const Color(0xFFD30814) : const Color(0xFF1C1C1E),
+                    color: isUser ? const Color(0xFFD30814) : (context.isDark ? const Color(0xFF1C1C1E) : const Color(0xFFE5E5EA)),
                     borderRadius: BorderRadius.only(
                       topLeft: const Radius.circular(16.0),
                       topRight: const Radius.circular(16.0),
@@ -4923,8 +5671,8 @@ class _TrackTicketsScreenState extends State<TrackTicketsScreen> {
                       ? _buildAttachmentView(attachmentType, attachmentPath, attachmentName, isUser)
                       : Text(
                           msg['text'],
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: isUser ? Colors.white : context.textColor,
                             fontSize: 13.0,
                             height: 1.4,
                           ),
@@ -4933,8 +5681,8 @@ class _TrackTicketsScreenState extends State<TrackTicketsScreen> {
                 const SizedBox(height: 4.0),
                 Text(
                   msg['time'],
-                  style: const TextStyle(
-                    color: Color(0xFF8E8E93),
+                  style: TextStyle(
+                    color: context.subTextColor,
                     fontSize: 9.0,
                     fontWeight: FontWeight.bold,
                   ),
@@ -5023,10 +5771,10 @@ class _TrackTicketsScreenState extends State<TrackTicketsScreen> {
   Widget _buildMessageInput() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-      decoration: const BoxDecoration(
-        color: Color(0xFF0F0F11),
+      decoration: BoxDecoration(
+        color: context.cardBg,
         border: Border(
-          top: BorderSide(color: Color(0xFF1C1C1E)),
+          top: BorderSide(color: context.borderCol),
         ),
       ),
       child: Row(
@@ -5039,16 +5787,16 @@ class _TrackTicketsScreenState extends State<TrackTicketsScreen> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 16.0),
               decoration: BoxDecoration(
-                color: const Color(0xFF141416),
+                color: context.isDark ? const Color(0xFF141416) : Colors.white,
                 borderRadius: BorderRadius.circular(24.0),
-                border: Border.all(color: const Color(0xFF2C2C2E)),
+                border: Border.all(color: context.borderCol),
               ),
               child: TextField(
                 controller: _messageController,
-                style: const TextStyle(color: Colors.white, fontSize: 14.0),
-                decoration: const InputDecoration(
+                style: TextStyle(color: context.textColor, fontSize: 14.0),
+                decoration: InputDecoration(
                   hintText: 'Type your response...',
-                  hintStyle: TextStyle(color: Color(0xFF8E8E93), fontSize: 14.0),
+                  hintStyle: TextStyle(color: context.subTextColor, fontSize: 14.0),
                   border: InputBorder.none,
                 ),
                 onSubmitted: (_) => _sendMessage(),
@@ -5283,83 +6031,239 @@ class NotificationsScreen extends StatefulWidget {
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
-  final List<Map<String, dynamic>> _notifications = [
-    {
-      'title': 'New Course Published: Advanced Cryptographic Protocols',
-      'subtitle': 'Duration: 6 Weeks · Free',
-      'time': '2 hours ago',
-      'icon': Icons.shield_rounded,
-      'iconColor': const Color(0xFFD30814),
-      'isUnread': true,
-    },
-    {
-      'title': 'Price Updated: Digital Marketing Excellence',
-      'subtitle': 'Duration: 8 Weeks · ₹ 4,999',
-      'time': '5 hours ago',
-      'icon': Icons.trending_up_rounded,
-      'iconColor': const Color(0xFFD30814),
-      'isUnread': true,
-    },
-    {
-      'title': 'Course Updated: Business Scalability 101',
-      'subtitle': 'Duration: 4 Weeks · ₹ 2,499',
-      'time': 'Yesterday',
-      'icon': Icons.business_rounded,
-      'iconColor': const Color(0xFF8E8E93),
-      'isUnread': false,
-    },
-    {
-      'title': 'New Mentor Session: Strategic Leadership with Anbarasu',
-      'subtitle': 'Duration: 1 Hour · Premium',
-      'time': '2 days ago',
-      'icon': Icons.psychology_rounded,
-      'iconColor': const Color(0xFF8E8E93),
-      'isUnread': false,
-    },
-  ];
+  List<Map<String, dynamic>> _notifications = [];
+  bool _isLoading = true;
 
-  void _markAllRead() {
+  @override
+  void initState() {
+    super.initState();
+    _loadNotifications();
+  }
+
+  Future<void> _loadNotifications() async {
+    if (!mounted) return;
     setState(() {
-      for (var notification in _notifications) {
-        notification['isUnread'] = false;
-      }
+      _isLoading = true;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('All notifications marked as read'),
-        backgroundColor: Color(0xFF1C1C1E),
-        duration: Duration(seconds: 2),
-      ),
-    );
+    try {
+      final list = await NotificationService.instance.fetchNotifications();
+      if (!mounted) return;
+      setState(() {
+        _notifications = list;
+        _isLoading = false;
+      });
+      NotificationBadge.instance.refresh();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _markAllRead() async {
+    try {
+      await NotificationBadge.instance.markAllRead();
+      if (!mounted) return;
+      setState(() {
+        for (var item in _notifications) {
+          item['isRead'] = true;
+        }
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('All notifications marked as read'),
+          backgroundColor: Color(0xFF1C1C1E),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Error marking all notifications as read: $e');
+    }
+  }
+
+  IconData _getIcon(String type) {
+    switch (type.toLowerCase()) {
+      case 'course':
+        return Icons.school_rounded;
+      case 'podcast':
+      case 'podcast_episode':
+      case 'podcast_series':
+        return Icons.mic_rounded;
+      case 'ebook':
+      case 'book':
+      case 'ebook_book':
+      case 'ebook_banner':
+        return Icons.menu_book_rounded;
+      case 'support':
+      case 'support_faq':
+      case 'support_ticket':
+      case 'support_feedback':
+        return Icons.support_agent_rounded;
+      case 'community':
+      case 'community_post':
+        return Icons.forum_rounded;
+      default:
+        return Icons.notifications_active_rounded;
+    }
+  }
+
+  Future<void> _onNotificationTap(Map<String, dynamic> item) async {
+    final id = item['id']?.toString();
+    if (id != null) {
+      try {
+        await NotificationService.instance.markAsRead(id);
+        if (mounted) {
+          setState(() => item['isRead'] = true);
+        }
+        NotificationBadge.instance.refresh();
+      } catch (e) {
+        debugPrint('Error marking notification as read: $e');
+      }
+    }
+
+    final type = item['type']?.toString() ?? '';
+    final referenceId = item['referenceId']?.toString();
+
+    if (!mounted) return;
+
+    void notFound() {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Content not found or removed.')),
+      );
+    }
+
+    try {
+      switch (type) {
+        case 'community_post':
+          if (referenceId == null) return notFound();
+          final post =
+              await NotificationService.instance.fetchCommunityPostById(referenceId);
+          if (!mounted) return;
+          if (post == null) return notFound();
+          final mappedPost = {
+            ...mapSupabasePostToFeedItem(post),
+            '_isHighlighted': true,
+          };
+          Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (context) => CommunityScreen(highlightPost: mappedPost)));
+          break;
+
+        case 'podcast_series':
+          if (referenceId == null) return notFound();
+          final series =
+              await PodcastService.instance.fetchSeriesById(referenceId);
+          if (!mounted) return;
+          if (series == null) return notFound();
+          Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (context) =>
+                      PodcastSeriesDetailScreen(seriesId: referenceId)));
+          break;
+
+        case 'podcast_episode':
+          if (referenceId == null) return notFound();
+          final episode =
+              await PodcastService.instance.fetchEpisodeById(referenceId);
+          if (!mounted) return;
+          if (episode == null) return notFound();
+          PodcastPlayerController.instance.loadAndPlay(episode);
+          Navigator.push(context,
+              MaterialPageRoute(builder: (context) => const PodcastScreen()));
+          break;
+
+        case 'ebook_book':
+          if (referenceId == null) return notFound();
+          final book = await EBookService.instance.fetchBookById(referenceId);
+          if (!mounted) return;
+          if (book == null) return notFound();
+          Navigator.push(context,
+              MaterialPageRoute(builder: (context) => BookDetailsScreen(book: book)));
+          break;
+
+        case 'ebook_banner':
+          Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (context) => const EBooksLibraryScreen()));
+          break;
+
+        case 'support_faq':
+          if (referenceId != null) {
+            final faq = await SupportService.instance.fetchFaqById(referenceId);
+            if (!mounted) return;
+            if (faq == null) return notFound();
+            Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (context) => const SupportCenterScreen()));
+            return;
+          }
+          Navigator.push(context,
+              MaterialPageRoute(builder: (context) => const SupportCenterScreen()));
+          break;
+
+        case 'support_ticket':
+        case 'support_feedback':
+          Navigator.push(context,
+              MaterialPageRoute(builder: (context) => const SupportCenterScreen()));
+          break;
+
+        default:
+          break;
+      }
+    } catch (e) {
+      debugPrint('Error handling notification tap: $e');
+      if (mounted) notFound();
+    }
+  }
+
+  String _formatTime(String? dateStr) {
+    if (dateStr == null) return '';
+    try {
+      final dt = DateTime.parse(dateStr).toLocal();
+      final diff = DateTime.now().difference(dt);
+      if (diff.inMinutes < 1) return 'Just now';
+      if (diff.inMinutes < 60) return '${diff.inMinutes} mins ago';
+      if (diff.inHours < 24) return '${diff.inHours} hours ago';
+      if (diff.inDays == 1) return 'Yesterday';
+      return '${diff.inDays} days ago';
+    } catch (_) {
+      return '';
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final isDark = context.isDark;
+    final textColor = context.textColor;
+
     return Scaffold(
-      backgroundColor: const Color(0xFF0F0F11),
+      backgroundColor: isDark ? const Color(0xFF0A0A0A) : const Color(0xFFF5F5F5),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0F0F11),
+        backgroundColor: Colors.transparent,
         elevation: 0.0,
         leading: IconButton(
-          icon: const Icon(Icons.menu_rounded, color: Colors.white, size: 24.0),
+          icon: Icon(Icons.arrow_back_ios_new_rounded, color: textColor, size: 20.0),
           onPressed: () => Navigator.pop(context),
         ),
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Image.asset(
-              'assets/images/TBT C Pvt Final logo-04.png',
-              height: 52.0, // Large Brand Logo in AppBar
-              fit: BoxFit.contain,
-              errorBuilder: (context, error, stackTrace) => const SizedBox.shrink(),
-            ),
+            const AppLogo.appBar(),
             const SizedBox(width: 8.0),
-            const Text(
-              'Alerts',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 16.0,
-                fontWeight: FontWeight.bold,
+            Flexible(
+              child: Text(
+                'Alerts',
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: textColor,
+                  fontSize: 16.0,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
           ],
@@ -5380,164 +6284,190 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         ],
       ),
       body: SafeArea(
-        child: Center(
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 600.0),
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 16.0),
-                // Prominent brand header with a large logo inside
-                Center(
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(24.0),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1C1C1E),
-                      borderRadius: BorderRadius.circular(20.0),
-                      border: Border.all(
-                        color: const Color(0xFFD30814).withOpacity(0.15),
-                        width: 1.5,
+        child: RefreshIndicator(
+          color: const Color(0xFFD30814),
+          onRefresh: _loadNotifications,
+          child: Center(
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 600.0),
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 16.0),
+                  Center(
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(24.0),
+                      decoration: BoxDecoration(
+                        color: context.cardBg,
+                        borderRadius: BorderRadius.circular(20.0),
+                        border: Border.all(
+                          color: context.borderCol,
+                          width: 1.5,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFFD30814).withOpacity(0.04),
+                            blurRadius: 20.0,
+                          ),
+                        ],
                       ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFFD30814).withOpacity(0.04),
-                          blurRadius: 20.0,
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      children: [
-                        Image.asset(
-                          'assets/images/TBT C Pvt Final logo-04.png',
-                          height: 76.0, // Huge logo
-                          fit: BoxFit.contain,
-                        ),
-                        const SizedBox(height: 14.0),
-                        const Text(
-                          'Tamil Business Tribe',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 18.0,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                        const SizedBox(height: 4.0),
-                        Text(
-                          'Stay updated with your latest tribe alerts & notifications',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.4),
-                            fontSize: 11.5,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 24.0),
-                const Text(
-                  'RECENT ACTIVITY',
-                  style: TextStyle(
-                    color: Color(0xFF8E8E93),
-                    fontSize: 12.0,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 0.8,
-                  ),
-                ),
-                const SizedBox(height: 12.0),
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: _notifications.length,
-                    itemBuilder: (context, index) {
-                      final item = _notifications[index];
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 12.0),
-                        padding: const EdgeInsets.all(16.0),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF1C1C1E),
-                          borderRadius: BorderRadius.circular(16.0),
-                          border: Border.all(
-                            color: const Color(0xFF2C2C2E),
-                            width: 1.0,
-                          ),
-                        ),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // Unread Red Dot
-                            if (item['isUnread'] == true) ...[
-                              Container(
-                                margin: const EdgeInsets.only(top: 18.0, right: 8.0),
-                                width: 6.0,
-                                height: 6.0,
-                                decoration: const BoxDecoration(
-                                  color: Color(0xFFD30814),
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                            ] else ...[
-                              const SizedBox(width: 14.0),
-                            ],
-                            
-                            // Icon Container
-                            Container(
-                              width: 48.0,
-                              height: 48.0,
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF2C2C2E),
-                                borderRadius: BorderRadius.circular(12.0),
-                              ),
-                              child: Icon(
-                                item['icon'] as IconData,
-                                color: item['iconColor'] as Color,
-                                size: 24.0,
-                              ),
+                      child: Column(
+                        children: [
+                          const AppLogo.card(),
+                          const SizedBox(height: 14.0),
+                          Text(
+                            'Tamil Business Tribe',
+                            style: TextStyle(
+                              color: context.textColor,
+                              fontSize: 18.0,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.5,
                             ),
-                            const SizedBox(width: 16.0),
-                            
-                            // Content
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                          ),
+                          const SizedBox(height: 4.0),
+                          Text(
+                            'Stay updated with your latest tribe alerts & notifications',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: textColor.withOpacity(0.5),
+                              fontSize: 11.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24.0),
+                  const Text(
+                    'RECENT ACTIVITY',
+                    style: TextStyle(
+                      color: Color(0xFF8E8E93),
+                      fontSize: 12.0,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                  const SizedBox(height: 12.0),
+                  Expanded(
+                    child: _isLoading
+                        ? const Center(
+                            child: CircularProgressIndicator(
+                              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFD30814)),
+                            ),
+                          )
+                        : _notifications.isEmpty
+                            ? ListView(
                                 children: [
-                                  Text(
-                                    item['title'] as String,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 14.5,
-                                      fontWeight: FontWeight.bold,
-                                      height: 1.25,
+                                  SizedBox(
+                                    height: 200,
+                                    child: Center(
+                                      child: Text(
+                                        'No notifications yet',
+                                        style: TextStyle(
+                                          color: textColor.withOpacity(0.5),
+                                          fontSize: 14.5,
+                                        ),
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(height: 4.0),
-                                  Text(
-                                    item['subtitle'] as String,
-                                    style: const TextStyle(
-                                      color: Color(0xFF8E8E93),
-                                      fontSize: 12.5,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6.0),
-                                  Text(
-                                    item['time'] as String,
-                                    style: const TextStyle(
-                                      color: Color(0xFF6E6E73),
-                                      fontSize: 11.5,
-                                    ),
-                                  ),
+                                  )
                                 ],
+                              )
+                            : ListView.builder(
+                                physics: const AlwaysScrollableScrollPhysics(),
+                                itemCount: _notifications.length,
+                                itemBuilder: (context, index) {
+                                  final item = _notifications[index];
+                                  final isUnread = !(item['isRead'] as bool? ?? false);
+                                  return GestureDetector(
+                                    onTap: () => _onNotificationTap(item),
+                                    child: Container(
+                                    margin: const EdgeInsets.only(bottom: 12.0),
+                                    padding: const EdgeInsets.all(16.0),
+                                    decoration: BoxDecoration(
+                                      color: context.cardBg,
+                                      borderRadius: BorderRadius.circular(16.0),
+                                      border: Border.all(
+                                        color: context.borderCol,
+                                        width: 1.0,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        if (isUnread) ...[
+                                          Container(
+                                            margin: const EdgeInsets.only(top: 18.0, right: 8.0),
+                                            width: 6.0,
+                                            height: 6.0,
+                                            decoration: const BoxDecoration(
+                                              color: Color(0xFFD30814),
+                                              shape: BoxShape.circle,
+                                            ),
+                                          ),
+                                        ] else ...[
+                                          const SizedBox(width: 14.0),
+                                        ],
+                                        Container(
+                                          width: 48.0,
+                                          height: 48.0,
+                                          decoration: BoxDecoration(
+                                            color: isDark
+                                                ? const Color(0xFF2C2C2E)
+                                                : const Color(0xFFE5E5EA),
+                                            borderRadius: BorderRadius.circular(12.0),
+                                          ),
+                                          child: Icon(
+                                            _getIcon(item['type']?.toString() ?? ''),
+                                            color: isUnread
+                                                ? const Color(0xFFD30814)
+                                                : const Color(0xFF8E8E93),
+                                            size: 24.0,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 16.0),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                item['title']?.toString() ?? '',
+                                                style: TextStyle(
+                                                  color: textColor,
+                                                  fontSize: 14.5,
+                                                  fontWeight: FontWeight.bold,
+                                                  height: 1.25,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 4.0),
+                                              Text(
+                                                item['message']?.toString() ?? '',
+                                                style: TextStyle(
+                                                  color: textColor.withOpacity(0.6),
+                                                  fontSize: 12.5,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 6.0),
+                                              Text(
+                                                _formatTime(item['createdAt']?.toString()),
+                                                style: const TextStyle(
+                                                  color: Color(0xFF6E6E73),
+                                                  fontSize: 11.5,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    ),
+                                  );
+                                },
                               ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -5576,55 +6506,59 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       (d) => d.year == day.year && d.month == day.month && d.day == day.day);
 
   void _showPolicyDialog() {
+    final isDark = context.isDark;
+    final textColor = context.textColor;
+    final subTextColor = context.subTextColor;
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF141416),
+        backgroundColor: context.cardBg,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20.0),
-          side: BorderSide(color: Colors.white.withOpacity(0.05), width: 1.0),
+          side: BorderSide(color: context.borderCol, width: 1.0),
         ),
         title: Row(
-          children: const [
-            Icon(Icons.info_outline_rounded, color: Color(0xFFD30814), size: 24.0),
-            SizedBox(width: 10.0),
+          children: [
+            const Icon(Icons.info_outline_rounded, color: Color(0xFFD30814), size: 24.0),
+            const SizedBox(width: 10.0),
             Text(
               'Attendance Policy',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
             ),
           ],
         ),
         content: SingleChildScrollView(
           child: ListBody(
-            children: const [
+            children: [
               Text(
                 '1. Consistency Requirement',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14.0),
+                style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 14.0),
               ),
-              SizedBox(height: 6.0),
+              const SizedBox(height: 6.0),
               Text(
                 'Members are required to maintain a minimum of 90% attendance across the 90-day challenge to remain eligible for standard certifications.',
-                style: TextStyle(color: Color(0xFF8E8E93), fontSize: 12.0, height: 1.35),
+                style: TextStyle(color: subTextColor, fontSize: 12.0, height: 1.35),
               ),
-              SizedBox(height: 16.0),
+              const SizedBox(height: 16.0),
               Text(
                 '2. Mastermind Eligibility',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14.0),
+                style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 14.0),
               ),
-              SizedBox(height: 6.0),
+              const SizedBox(height: 6.0),
               Text(
                 'To qualify for Mastermind groups and exclusive 1-on-1 coaching sessions, a 95% threshold is required. Dropping below 90% will temporarily suspend 1-on-1 access.',
-                style: TextStyle(color: Color(0xFF8E8E93), fontSize: 12.0, height: 1.35),
+                style: TextStyle(color: subTextColor, fontSize: 12.0, height: 1.35),
               ),
-              SizedBox(height: 16.0),
+              const SizedBox(height: 16.0),
               Text(
                 '3. Absent & Streak Rules',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14.0),
+                style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 14.0),
               ),
-              SizedBox(height: 6.0),
+              const SizedBox(height: 6.0),
               Text(
                 'Marking attendance daily preserves your Streak count. Missed days reset active streaks but do not impact historically verified points.',
-                style: TextStyle(color: Color(0xFF8E8E93), fontSize: 12.0, height: 1.35),
+                style: TextStyle(color: subTextColor, fontSize: 12.0, height: 1.35),
               ),
             ],
           ),
@@ -5644,47 +6578,62 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = context.isDark;
+    final textColor = context.textColor;
+    final subTextColor = context.subTextColor;
+
     return Scaffold(
-      backgroundColor: const Color(0xFF050505),
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0.0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20.0),
-          onPressed: () => Navigator.pop(context),
+      body: Container(
+        decoration: BoxDecoration(
+          color: context.scaffoldBg,
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: context.themeGradients,
+            stops: const [0.0, 0.45, 1.0],
+          ),
         ),
-      ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          physics: const BouncingScrollPhysics(),
-          child: Center(
-            child: Container(
-              constraints: const BoxConstraints(maxWidth: 500),
-              padding: const EdgeInsets.symmetric(horizontal: 20.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SizedBox(height: 8.0),
-                  // Title Header
-                  const Text(
-                    'Attendance',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 32.0,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: -0.5,
-                    ),
-                  ),
-                  const SizedBox(height: 6.0),
-                  const Text(
-                    'Track your consistency and commitment to the 90-day challenge.',
-                    style: TextStyle(
-                      color: Color(0xFF8E8E93),
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  const SizedBox(height: 24.0),
+        child: Column(
+          children: [
+            AppBar(
+              backgroundColor: Colors.transparent,
+              elevation: 0.0,
+              leading: IconButton(
+                icon: Icon(Icons.arrow_back_ios_new_rounded, color: isDark ? const Color(0xFFFCA5A5) : const Color(0xFFD30814), size: 20.0),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                child: Center(
+                  child: Container(
+                    constraints: const BoxConstraints(maxWidth: 500),
+                    padding: const EdgeInsets.symmetric(horizontal: 20.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 8.0),
+                        // Title Header
+                        Text(
+                          'Attendance',
+                          style: TextStyle(
+                            color: textColor,
+                            fontSize: 32.0,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 6.0),
+                        Text(
+                          'Track your consistency and commitment to the 90-day challenge.',
+                          style: TextStyle(
+                            color: subTextColor,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 24.0),
 
                   // 1. Current Momentum (Streak Card)
                   Container(
@@ -5748,10 +6697,10 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 16.0),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF141416),
+                      color: context.cardBg,
                       borderRadius: BorderRadius.circular(20.0),
                       border: Border.all(
-                        color: Colors.white.withOpacity(0.04),
+                        color: context.borderCol,
                         width: 1.0,
                       ),
                     ),
@@ -5770,20 +6719,20 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text(
+                              Text(
                                 'STATUS',
                                 style: TextStyle(
-                                  color: Color(0xFF8E8E93),
+                                  color: subTextColor,
                                   fontSize: 8.0,
                                   fontWeight: FontWeight.bold,
                                   letterSpacing: 0.5,
                                 ),
                               ),
                               const SizedBox(height: 4.0),
-                              const Text(
+                              Text(
                                 'Elite Performer',
                                 style: TextStyle(
-                                  color: Colors.white,
+                                  color: textColor,
                                   fontSize: 15.0,
                                   fontWeight: FontWeight.w900,
                                 ),
@@ -5821,10 +6770,10 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                                     ),
                                   ),
                                   const SizedBox(width: 6.0),
-                                  const Text(
+                                  Text(
                                     '+244 members active today',
                                     style: TextStyle(
-                                      color: Color(0xFF8E8E93),
+                                      color: subTextColor,
                                       fontSize: 10.5,
                                       fontWeight: FontWeight.w500,
                                     ),
@@ -5892,10 +6841,13 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                   // 5. Attendance Policy Section
                   _buildPolicySection(),
                   const SizedBox(height: 36.0),
-                ],
+                      ],
+                    ),
+                  ),
+                ),
               ),
             ),
-          ),
+          ],
         ),
       ),
     );
@@ -5910,10 +6862,10 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     return Container(
       padding: const EdgeInsets.all(18.0),
       decoration: BoxDecoration(
-        color: const Color(0xFF141416),
+        color: context.cardBg,
         borderRadius: BorderRadius.circular(16.0),
         border: Border.all(
-          color: Colors.white.withOpacity(0.04),
+          color: context.borderCol,
           width: 1.0,
         ),
       ),
@@ -5926,8 +6878,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
               const SizedBox(width: 6.0),
               Text(
                 title,
-                style: const TextStyle(
-                  color: Color(0xFF8E8E93),
+                style: TextStyle(
+                  color: context.subTextColor,
                   fontSize: 8.5,
                   fontWeight: FontWeight.bold,
                   letterSpacing: 0.5,
@@ -5938,8 +6890,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           const SizedBox(height: 10.0),
           Text(
             value,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: context.textColor,
               fontSize: 24.0,
               fontWeight: FontWeight.w900,
             ),
@@ -5947,8 +6899,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           const SizedBox(height: 4.0),
           Text(
             label,
-            style: const TextStyle(
-              color: Color(0xFF8E8E93),
+            style: TextStyle(
+              color: context.subTextColor,
               fontSize: 10.0,
               fontWeight: FontWeight.w500,
             ),
@@ -5959,6 +6911,10 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   }
 
   Widget _buildMonthlyCalendar() {
+    final isDark = context.isDark;
+    final textColor = context.textColor;
+    final subTextColor = context.subTextColor;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -5966,13 +6922,13 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         Padding(
           padding: const EdgeInsets.only(bottom: 14.0),
           child: Row(
-            children: const [
-              Icon(Icons.event_available_rounded, color: Color(0xFFD30814), size: 18.0),
-              SizedBox(width: 10.0),
+            children: [
+              const Icon(Icons.event_available_rounded, color: Color(0xFFD30814), size: 18.0),
+              const SizedBox(width: 10.0),
               Text(
                 'Attendance Calendar',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: textColor,
                   fontSize: 16.0,
                   fontWeight: FontWeight.bold,
                 ),
@@ -5980,10 +6936,10 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
             ],
           ),
         ),
-        const Text(
+        Text(
           'Tap a date to select • Red dot = Present • Grey dot = Absent',
           style: TextStyle(
-            color: Color(0xFF8E8E93),
+            color: subTextColor,
             fontSize: 11.0,
             fontWeight: FontWeight.w500,
           ),
@@ -5991,10 +6947,10 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         const SizedBox(height: 16.0),
         Container(
           decoration: BoxDecoration(
-            color: const Color(0xFF141416),
+            color: context.cardBg,
             borderRadius: BorderRadius.circular(20.0),
             border: Border.all(
-              color: Colors.white.withOpacity(0.05),
+              color: context.borderCol,
               width: 1.0,
             ),
           ),
@@ -6019,32 +6975,32 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
             headerStyle: HeaderStyle(
               formatButtonVisible: false,
               titleCentered: true,
-              leftChevronIcon: const Icon(Icons.chevron_left_rounded, color: Colors.white70, size: 22.0),
-              rightChevronIcon: const Icon(Icons.chevron_right_rounded, color: Colors.white70, size: 22.0),
-              titleTextStyle: const TextStyle(
-                color: Colors.white,
+              leftChevronIcon: Icon(Icons.chevron_left_rounded, color: textColor.withOpacity(0.7), size: 22.0),
+              rightChevronIcon: Icon(Icons.chevron_right_rounded, color: textColor.withOpacity(0.7), size: 22.0),
+              titleTextStyle: TextStyle(
+                color: textColor,
                 fontSize: 16.0,
                 fontWeight: FontWeight.bold,
               ),
               headerPadding: const EdgeInsets.symmetric(vertical: 14.0),
-              decoration: const BoxDecoration(
-                color: Color(0xFF1C1C1E),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF1C1C1E) : const Color(0xFFE5E5EA),
               ),
             ),
-            daysOfWeekStyle: const DaysOfWeekStyle(
-              weekdayStyle: TextStyle(color: Color(0xFF8E8E93), fontSize: 12.0, fontWeight: FontWeight.bold),
-              weekendStyle: TextStyle(color: Color(0xFFD30814), fontSize: 12.0, fontWeight: FontWeight.bold),
+            daysOfWeekStyle: DaysOfWeekStyle(
+              weekdayStyle: TextStyle(color: subTextColor, fontSize: 12.0, fontWeight: FontWeight.bold),
+              weekendStyle: const TextStyle(color: Color(0xFFD30814), fontSize: 12.0, fontWeight: FontWeight.bold),
             ),
             calendarStyle: CalendarStyle(
               outsideDaysVisible: false,
-              defaultTextStyle: const TextStyle(color: Colors.white70, fontSize: 13.0),
+              defaultTextStyle: TextStyle(color: textColor.withOpacity(0.87), fontSize: 13.0),
               weekendTextStyle: const TextStyle(color: Color(0xFFD30814), fontSize: 13.0),
               todayDecoration: BoxDecoration(
                 color: const Color(0xFFD30814).withOpacity(0.25),
                 shape: BoxShape.circle,
                 border: Border.all(color: const Color(0xFFD30814), width: 1.5),
               ),
-              todayTextStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              todayTextStyle: TextStyle(color: isDark ? Colors.white : Colors.black, fontWeight: FontWeight.bold),
               selectedDecoration: const BoxDecoration(
                 color: Color(0xFFD30814),
                 shape: BoxShape.circle,
@@ -6072,7 +7028,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                         ),
                         child: Text(
                           '${day.day}',
-                          style: const TextStyle(color: Colors.white, fontSize: 13.0, fontWeight: FontWeight.bold),
+                          style: TextStyle(color: textColor, fontSize: 13.0, fontWeight: FontWeight.bold),
                         ),
                       ),
                       const SizedBox(height: 2.0),
@@ -6088,12 +7044,12 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                         height: 32.0,
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.05),
+                          color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.05),
                           shape: BoxShape.circle,
                         ),
                         child: Text(
                           '${day.day}',
-                          style: const TextStyle(color: Color(0xFF8E8E93), fontSize: 13.0),
+                          style: TextStyle(color: subTextColor, fontSize: 13.0),
                         ),
                       ),
                       const SizedBox(height: 2.0),
@@ -6173,14 +7129,15 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   }
 
   Widget _buildPolicySection() {
+    final isDark = context.isDark;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20.0),
       decoration: BoxDecoration(
-        color: const Color(0xFF141416),
+        color: context.cardBg,
         borderRadius: BorderRadius.circular(20.0),
         border: Border.all(
-          color: Colors.white.withOpacity(0.04),
+          color: context.borderCol,
           width: 1.0,
         ),
       ),
@@ -6192,19 +7149,19 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
             child: Icon(Icons.info_outline_rounded, color: Color(0xFFD30814), size: 18.0),
           ),
           const SizedBox(height: 14.0),
-          const Text(
+          Text(
             'Attendance Policy',
             style: TextStyle(
-              color: Colors.white,
+              color: context.textColor,
               fontSize: 14.5,
               fontWeight: FontWeight.bold,
             ),
           ),
           const SizedBox(height: 8.0),
-          const Text(
+          Text(
             'Maintain above 90% attendance to stay eligible for the Mastermind Certification and 1-on-1 coaching sessions.',
             style: TextStyle(
-              color: Color(0xFF8E8E93),
+              color: context.subTextColor,
               fontSize: 12.0,
               height: 1.45,
               fontWeight: FontWeight.w500,
@@ -6218,14 +7175,14 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
             child: OutlinedButton(
               onPressed: _showPolicyDialog,
               style: OutlinedButton.styleFrom(
-                side: BorderSide(color: Colors.white.withOpacity(0.12), width: 1.0),
+                side: BorderSide(color: context.borderCol, width: 1.0),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.0)),
-                backgroundColor: const Color(0xFF1C1C1E),
+                backgroundColor: isDark ? const Color(0xFF1C1C1E) : const Color(0xFFE5E5EA),
               ),
-              child: const Text(
+              child: Text(
                 'Read Policy',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: context.textColor,
                   fontSize: 11.5,
                   fontWeight: FontWeight.bold,
                 ),

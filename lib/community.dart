@@ -448,6 +448,23 @@ class _CommunityScreenState extends State<CommunityScreen> {
     );
   }
 
+  // Posts authored by the current user should always show their live
+  // profile photo (the exact same ProfileScreen.profileImagePath source
+  // Home already reads), not whatever avatarUrl was captured when the post
+  // was created — mirrors the isCurrentUser pattern already used for the
+  // Leaderboard's own avatar in main.dart.
+  String _resolvePostAvatar(Map<String, dynamic> post) {
+    final isOwnPost = post['name'] == 'Sakthi (You)';
+    final livePhoto = ProfileScreen.profileImagePath;
+    if (isOwnPost && livePhoto != null && livePhoto.isNotEmpty) {
+      return livePhoto;
+    }
+    final stored = post['avatarUrl']?.toString();
+    return (stored != null && stored.isNotEmpty)
+        ? stored
+        : 'assets/images/nav  bar.jpeg';
+  }
+
   // Detail user profile sheet
   void _showUserProfile(Map<String, dynamic> post) {
     showModalBottomSheet(
@@ -474,84 +491,83 @@ class _CommunityScreenState extends State<CommunityScreen> {
                     ),
                   ),
                   const SizedBox(height: 24.0),
-                  GestureDetector(
-                    onTap: () => showProfilePhotoDialog(
-                        context, post['avatarUrl'] as String),
-                    child: CircleAvatar(
-                      radius: 40.0,
-                      backgroundColor: context.cardBg,
-                      child: ClipOval(
-                        child: post['avatarUrl']
-                                    .toString()
-                                    .startsWith('http') ||
-                                post['avatarUrl']
-                                    .toString()
-                                    .startsWith('assets/')
-                            ? (post['avatarUrl'].toString().startsWith('http')
-                                ? Image.network(
-                                    post['avatarUrl'] as String,
-                                    width: 80.0,
-                                    height: 80.0,
-                                    fit: BoxFit.cover,
-                                    errorBuilder:
-                                        (context, error, stackTrace) =>
-                                            Container(
-                                      color: context.cardBg,
-                                      child: Center(
-                                        child: Text(
-                                          (post['name'] as String)
-                                              .substring(0, 1),
-                                          style: TextStyle(
-                                              color: context.textColor,
-                                              fontSize: 24,
-                                              fontWeight: FontWeight.bold),
-                                        ),
+                  Builder(builder: (context) {
+                    final avatarSrc = _resolvePostAvatar(post);
+                    return GestureDetector(
+                      onTap: () => showProfilePhotoDialog(context, avatarSrc),
+                      child: CircleAvatar(
+                        radius: 40.0,
+                        backgroundColor: context.cardBg,
+                        child: ClipOval(
+                          child: avatarSrc.startsWith('http')
+                              ? Image.network(
+                                  avatarSrc,
+                                  width: 80.0,
+                                  height: 80.0,
+                                  fit: BoxFit.cover,
+                                  errorBuilder:
+                                      (context, error, stackTrace) =>
+                                          Container(
+                                    color: context.cardBg,
+                                    child: Center(
+                                      child: Text(
+                                        (post['name'] as String)
+                                            .substring(0, 1),
+                                        style: TextStyle(
+                                            color: context.textColor,
+                                            fontSize: 24,
+                                            fontWeight: FontWeight.bold),
                                       ),
-                                    ),
-                                  )
-                                : Image.asset(
-                                    post['avatarUrl'] as String,
-                                    width: 80.0,
-                                    height: 80.0,
-                                    fit: BoxFit.cover,
-                                    errorBuilder:
-                                        (context, error, stackTrace) =>
-                                            Container(
-                                      color: context.cardBg,
-                                      child: Center(
-                                        child: Text(
-                                          (post['name'] as String)
-                                              .substring(0, 1),
-                                          style: TextStyle(
-                                              color: context.textColor,
-                                              fontSize: 24,
-                                              fontWeight: FontWeight.bold),
-                                        ),
-                                      ),
-                                    ),
-                                  ))
-                            : Image.file(
-                                File(post['avatarUrl'] as String),
-                                width: 80.0,
-                                height: 80.0,
-                                fit: BoxFit.cover,
-                                errorBuilder: (context, error, stackTrace) =>
-                                    Container(
-                                  color: context.cardBg,
-                                  child: Center(
-                                    child: Text(
-                                      (post['name'] as String).substring(0, 1),
-                                      style: TextStyle(
-                                          color: context.textColor,
-                                          fontSize: 24,
-                                          fontWeight: FontWeight.bold),
                                     ),
                                   ),
-                                ),
-                              ),
+                                )
+                              : avatarSrc.startsWith('assets/')
+                                  ? Image.asset(
+                                      avatarSrc,
+                                      width: 80.0,
+                                      height: 80.0,
+                                      fit: BoxFit.cover,
+                                      errorBuilder:
+                                          (context, error, stackTrace) =>
+                                              Container(
+                                        color: context.cardBg,
+                                        child: Center(
+                                          child: Text(
+                                            (post['name'] as String)
+                                                .substring(0, 1),
+                                            style: TextStyle(
+                                                color: context.textColor,
+                                                fontSize: 24,
+                                                fontWeight: FontWeight.bold),
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                  : Image.file(
+                                      File(avatarSrc),
+                                      width: 80.0,
+                                      height: 80.0,
+                                      fit: BoxFit.cover,
+                                      errorBuilder:
+                                          (context, error, stackTrace) =>
+                                              Container(
+                                        color: context.cardBg,
+                                        child: Center(
+                                          child: Text(
+                                            (post['name'] as String)
+                                                .substring(0, 1),
+                                            style: TextStyle(
+                                                color: context.textColor,
+                                                fontSize: 24,
+                                                fontWeight: FontWeight.bold),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                        ),
                       ),
-                    ),
-                  ),
+                    );
+                  }),
                   const SizedBox(height: 16.0),
                   Text(
                     post['name'] as String,
@@ -1237,6 +1253,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
   }
 
   Widget _buildPostCard(Map<String, dynamic> post) {
+    final avatarSrc = _resolvePostAvatar(post);
     return Container(
       margin: const EdgeInsets.only(bottom: 24.0),
       child: Column(
@@ -1252,11 +1269,28 @@ class _CommunityScreenState extends State<CommunityScreen> {
                   radius: 20.0,
                   backgroundColor: context.cardBg,
                   child: ClipOval(
-                    child: post['avatarUrl'].toString().startsWith('http') ||
-                            post['avatarUrl'].toString().startsWith('assets/')
-                        ? (post['avatarUrl'].toString().startsWith('http')
-                            ? Image.network(
-                                post['avatarUrl'] as String,
+                    child: avatarSrc.startsWith('http')
+                        ? Image.network(
+                            avatarSrc,
+                            width: 40.0,
+                            height: 40.0,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) =>
+                                Container(
+                              color: context.cardBg,
+                              child: Center(
+                                child: Text(
+                                  (post['name'] as String).substring(0, 1),
+                                  style: TextStyle(
+                                      color: context.textColor,
+                                      fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                            ),
+                          )
+                        : avatarSrc.startsWith('assets/')
+                            ? Image.asset(
+                                avatarSrc,
                                 width: 40.0,
                                 height: 40.0,
                                 fit: BoxFit.cover,
@@ -1273,8 +1307,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
                                   ),
                                 ),
                               )
-                            : Image.asset(
-                                post['avatarUrl'] as String,
+                            : Image.file(
+                                File(avatarSrc),
                                 width: 40.0,
                                 height: 40.0,
                                 fit: BoxFit.cover,
@@ -1290,25 +1324,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
                                     ),
                                   ),
                                 ),
-                              ))
-                        : Image.file(
-                            File(post['avatarUrl'] as String),
-                            width: 40.0,
-                            height: 40.0,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) =>
-                                Container(
-                              color: context.cardBg,
-                              child: Center(
-                                child: Text(
-                                  (post['name'] as String).substring(0, 1),
-                                  style: TextStyle(
-                                      color: context.textColor,
-                                      fontWeight: FontWeight.bold),
-                                ),
                               ),
-                            ),
-                          ),
                   ),
                 ),
               ),
