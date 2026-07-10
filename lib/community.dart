@@ -1102,9 +1102,20 @@ class _CommunityScreenState extends State<CommunityScreen> {
                       // Red circle plus button — opens the existing post
                       // composer, which lives on the Home screen underneath
                       // this one (there is no separate Create Post route).
+                      // popUntil(isFirst) isn't reliable here because this
+                      // app's actual root route isn't always Home depending
+                      // on how this screen was reached, so this explicitly
+                      // clears the stack down to a fresh Home instead —
+                      // the composer defaults to expanded/scrolled-to-top,
+                      // so it's already in view with no extra signalling.
                       GestureDetector(
-                        onTap: () => Navigator.of(context)
-                            .popUntil((route) => route.isFirst),
+                        onTap: () {
+                          Navigator.of(context).pushAndRemoveUntil(
+                            MaterialPageRoute(
+                                builder: (context) => const PostPopupScreen()),
+                            (route) => false,
+                          );
+                        },
                         child: Container(
                           width: 32.0,
                           height: 32.0,
