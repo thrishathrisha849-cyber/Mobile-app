@@ -1,0 +1,32 @@
+[
+  {
+    "icon": "fa-spa",
+    "rawQuestion": "Did you finish this new habit?",
+    "highlightWord": "new habit",
+    "subtitle": "Start your day right."
+  },
+  {
+    "icon": "fa-bullseye",
+    "rawQuestion": "Did you finish this new habit?",
+    "highlightWord": "new habit",
+    "subtitle": "Start your day right."
+  },
+  {
+    "icon": "fa-dumbbell",
+    "rawQuestion": "Did you finish this new habit?",
+    "highlightWord": "new habit",
+    "subtitle": "Start your day right."
+  },
+  {
+    "icon": "fa-coffee",
+    "rawQuestion": "Did you finish this new habit?",
+    "highlightWord": "new habit",
+    "subtitle": "Start your day right."
+  },
+  {
+    "icon": "fa-sun",
+    "rawQuestion": "Did you finish this new habit?",
+    "highlightWord": "new habit",
+    "subtitle": "Start your day right."
+  }
+]

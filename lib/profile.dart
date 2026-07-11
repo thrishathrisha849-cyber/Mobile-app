@@ -21,6 +21,7 @@ import 'ebooks.dart';
 import 'ebook_service.dart';
 import 'tbt_points_service.dart';
 import 'tbt_points_screen.dart';
+import 'connections_list_page.dart';
 
 
 class ProfileScreen extends StatefulWidget {
@@ -674,7 +675,16 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
         children: [
           _buildStatItem('$_dailyStreak Days', 'Daily Streak', Icons.whatshot_rounded, const Color(0xFFFF5E3A)),
           _buildVerticalDivider(),
-          _buildStatItem('$_connectionsCount', 'Connections', Icons.people_alt_rounded, const Color(0xFF2F80ED)),
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const ConnectionsListPage()),
+              );
+            },
+            child: _buildStatItem('$_connectionsCount', 'Connections', Icons.people_alt_rounded, const Color(0xFF2F80ED)),
+          ),
           _buildVerticalDivider(),
           GestureDetector(
             behavior: HitTestBehavior.opaque,

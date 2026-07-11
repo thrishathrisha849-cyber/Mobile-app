@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'profile.dart';
+import 'main.dart';
+import 'notification_service.dart';
 
 class CoursesScreen extends StatefulWidget {
   const CoursesScreen({super.key});
@@ -11,25 +13,29 @@ class CoursesScreen extends StatefulWidget {
 
 class _CoursesScreenState extends State<CoursesScreen> {
   @override
+  void initState() {
+    super.initState();
+    NotificationBadge.instance.ensureLoaded();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final isDark = context.isDark;
+    final textColor = context.textColor;
+
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0A),
+      backgroundColor: context.scaffoldBg,
+      drawer: const TbtAppDrawer(),
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0.0,
-        leading: IconButton(
-          icon: const Icon(Icons.menu_rounded, color: Colors.white, size: 24.0),
-          onPressed: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Menu option coming soon!'), duration: Duration(seconds: 1)),
-            );
-          },
+        leading: Builder(
+          builder: (context) => IconButton(
+            icon: Icon(Icons.menu_rounded, color: textColor, size: 24.0),
+            onPressed: () => Scaffold.of(context).openDrawer(),
+          ),
         ),
-        title: Image.asset(
-          'assets/images/TBT C Pvt Final logo-04.png',
-          height: 44.0,
-          fit: BoxFit.contain,
-        ),
+        title: const AppLogo.appBar(),
         centerTitle: true,
         actions: [
           // Fire Streak Widget
@@ -41,7 +47,7 @@ class _CoursesScreenState extends State<CoursesScreen> {
                 shape: BoxShape.circle,
                 color: Colors.black.withOpacity(0.3),
                 border: Border.all(
-                  color: const Color(0xFF2C2C2E),
+                  color: context.borderCol,
                 ),
               ),
               child: Stack(
@@ -75,28 +81,47 @@ class _CoursesScreenState extends State<CoursesScreen> {
           const SizedBox(width: 12.0),
           // Notification Bell
           IconButton(
-            icon: Stack(
-              children: [
-                const Icon(Icons.notifications_outlined, color: Colors.white, size: 22.0),
-                Positioned(
-                  right: 1,
-                  top: 1,
-                  child: Container(
-                    width: 6,
-                    height: 6,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFD30814),
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-              ],
+            icon: AnimatedBuilder(
+              animation: NotificationBadge.instance,
+              builder: (context, _) {
+                final count = NotificationBadge.instance.unreadCount;
+                return Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Icon(Icons.notifications_outlined,
+                        color: textColor, size: 22.0),
+                    if (count > 0)
+                      Positioned(
+                        right: -2,
+                        top: -2,
+                        child: Container(
+                          padding: const EdgeInsets.all(2.0),
+                          constraints:
+                              const BoxConstraints(minWidth: 14, minHeight: 14),
+                          decoration: const BoxDecoration(
+                            color: Color(0xFFD30814),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Text(
+                            count > 9 ? '9+' : '$count',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 8.0,
+                                fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              },
             ),
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const NotificationsScreen()),
-              );
+                MaterialPageRoute(
+                    builder: (context) => const NotificationsScreen()),
+              ).then((_) => NotificationBadge.instance.refresh());
             },
           ),
           // Profile Avatar
@@ -144,17 +169,23 @@ class _CoursesScreenState extends State<CoursesScreen> {
       body: Container(
         width: double.infinity,
         height: double.infinity,
-        decoration: const BoxDecoration(
-          color: Color(0xFF0A0A0A),
+        decoration: BoxDecoration(
+          color: context.scaffoldBg,
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              Color(0xFF1E0304), // Dark Red Glow backdrop
-              Color(0xFF0A0A0A),
-              Color(0xFF0A0A0A),
-            ],
-            stops: [0.0, 0.45, 1.0],
+            colors: isDark
+                ? const [
+                    Color(0xFF1E0304), // Dark Red Glow backdrop
+                    Color(0xFF0B0B0F),
+                    Color(0xFF0B0B0F),
+                  ]
+                : const [
+                    Color(0xFFFFECEE),
+                    Color(0xFFF5F5F5),
+                    Color(0xFFFFFFFF),
+                  ],
+            stops: const [0.0, 0.45, 1.0],
           ),
         ),
         child: Padding(
@@ -168,7 +199,7 @@ class _CoursesScreenState extends State<CoursesScreen> {
                 width: 90.0,
                 height: 90.0,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF141416),
+                  color: isDark ? const Color(0xFF141416) : Colors.white,
                   shape: BoxShape.circle,
                   border: Border.all(
                     color: const Color(0xFFD30814).withOpacity(0.2),
@@ -189,20 +220,20 @@ class _CoursesScreenState extends State<CoursesScreen> {
                 ),
               ),
               const SizedBox(height: 24.0),
-              const Text(
+              Text(
                 'No Enrolled Courses',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: textColor,
                   fontSize: 20.0,
                   fontWeight: FontWeight.bold,
                 ),
               ),
               const SizedBox(height: 10.0),
-              const Text(
+              Text(
                 'Start your learning journey today! Any courses you enroll in will be displayed here.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: Colors.white30,
+                  color: isDark ? Colors.white30 : Colors.black54,
                   fontSize: 13.5,
                   height: 1.5,
                 ),
@@ -212,13 +243,15 @@ class _CoursesScreenState extends State<CoursesScreen> {
               ElevatedButton(
                 onPressed: () {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Course Catalog is coming soon!')),
+                    const SnackBar(
+                        content: Text('Course Catalog is coming soon!')),
                   );
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFD30814),
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 32.0, vertical: 14.0),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 32.0, vertical: 14.0),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(24.0),
                   ),

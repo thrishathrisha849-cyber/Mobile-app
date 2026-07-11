@@ -20,6 +20,9 @@ Future<void> firebaseBackgroundMessageHandler(RemoteMessage message) async {
 class FirebaseNotificationService {
   static final FirebaseMessaging _messaging = FirebaseMessaging.instance;
 
+  // FCM token stored here after initialization
+  static String? fcmToken;
+
   // Stream controller so the app can listen to incoming messages
   static final ValueNotifier<RemoteMessage?> onMessageReceived =
       ValueNotifier(null);
@@ -77,15 +80,15 @@ class FirebaseNotificationService {
   // ── Token ─────────────────────────────────────
   static Future<void> _printFcmToken() async {
     final token = await _messaging.getToken();
+    fcmToken = token; // store for UI access
     debugPrint('═══════════════════════════════════════════');
     debugPrint('  FCM TOKEN (use in Firebase Console):');
     debugPrint('  $token');
     debugPrint('═══════════════════════════════════════════');
 
-    // Listen for token refresh
     _messaging.onTokenRefresh.listen((newToken) {
+      fcmToken = newToken;
       debugPrint('[FCM] Token refreshed: $newToken');
-      // TODO: send newToken to your backend server here
     });
   }
 

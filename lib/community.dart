@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'main.dart';
 import 'profile.dart';
 import 'notification_service.dart';
+import 'connections_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 // Global database of posts so that main.dart can insert new posts dynamically
@@ -258,226 +259,80 @@ String formatPostTime(dynamic createdAt) {
 
   const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
   ];
   return '${weekdays[dt.weekday - 1]}, ${dt.day} ${months[dt.month - 1]} ${dt.year}';
 }
 
-class _CommunityScreenState extends State<CommunityScreen> {
-  int _activeTab = 0; // 0: For You, 1: Following, 2: Mentors
+/// The same "Member ID" shown in a post author's profile sheet — derived
+/// from the display name since there's no real per-user id in this app's
+/// backend (see `admin-app/user_connections_schema.sql`). Padded so short
+/// hash strings can never make `substring` throw.
+String memberIdFor(String name) {
+  final digits = name.hashCode.abs().toString().padLeft(5, '0');
+  return 'TBT-${digits.substring(0, 5)}';
+}
 
-  // Simulated Video Player States
-  final Map<String, bool> _playingVideos = {};
-  final Map<String, double> _videoProgress = {};
-  final Map<String, int> _videoElapsed = {};
-
-  // Search state
-  bool _isSearching = false;
-  String _searchQuery = '';
-  final TextEditingController _searchController = TextEditingController();
-
-  @override
-  void initState() {
-    super.initState();
-    NotificationBadge.instance.ensureLoaded();
-    _loadPersistedPosts();
+// Posts authored by the current user should always show their live profile
+// photo (the exact same ProfileScreen.profileImagePath source Home already
+// reads), not whatever avatarUrl was captured when the post was created —
+// mirrors the isCurrentUser pattern already used for the Leaderboard's own
+// avatar in main.dart. Top-level (not a State method) so both the Community
+// feed and the Connections list page can resolve the same author's avatar
+// consistently.
+String resolvePostAvatar(Map<String, dynamic> post) {
+  final isOwnPost = post['name'] == 'Sakthi (You)';
+  final livePhoto = ProfileScreen.profileImagePath;
+  if (isOwnPost && livePhoto != null && livePhoto.isNotEmpty) {
+    return livePhoto;
   }
+  final stored = post['avatarUrl']?.toString();
+  return (stored != null && stored.isNotEmpty)
+      ? stored
+      : 'assets/images/nav  bar.jpeg';
+}
 
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _loadPersistedPosts() async {
-    await loadPostsFromLocal();
-    if (mounted) {
-      setState(() {});
-    }
-    await _fetchPostsFromSupabase();
-  }
-
-  Future<void> _fetchPostsFromSupabase() async {
-    try {
-      final response = await Supabase.instance.client
-          .from('posts')
-          .select()
-          .eq('is_approved', true)
-          .order('created_at', ascending: false);
-      
-      final List<Map<String, dynamic>> fetchedPosts = [];
-      for (var row in response) {
-        fetchedPosts.add(mapSupabasePostToFeedItem(row));
-      }
-      
-      if (mounted) {
-        setState(() {
-          communityPosts.clear();
-          communityPosts.addAll(fetchedPosts);
-        });
-        await savePostsToLocal();
-      }
-    } catch (e) {
-      debugPrint('Error fetching posts from Supabase: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Failed to refresh feed. Showing last saved posts.'),
-            action: SnackBarAction(
-              label: 'RETRY',
-              onPressed: _fetchPostsFromSupabase,
+// The user profile/details bottom sheet shown when tapping a post author —
+// top-level (not a State method) so it's the exact same widget reused by
+// both the Community feed and the Connections list page, rather than a
+// second lookalike screen. `onToggleFollow`/`onMessage` are passed in so
+// this stays decoupled from any one screen's State.
+void showUserProfileSheet(
+  BuildContext context,
+  Map<String, dynamic> post, {
+  required Future<void> Function(Map<String, dynamic>) onToggleFollow,
+  required void Function(String) onMessage,
+}) {
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: context.cardBg,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(24.0)),
+    ),
+    builder: (context) {
+      return StatefulBuilder(
+        builder: (context, setModalState) {
+          final isFollowing = post['isFollowing'] == true;
+          // Scrollable + height-capped so this never overflows on very
+          // small screens (e.g. short badge/name combinations plus both
+          // action buttons no longer fit unscrolled below ~960px tall).
+          return ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.9,
             ),
-          ),
-        );
-      }
-    }
-  }
-
-  void _togglePlayVideo(String userName) {
-    final isPlaying = _playingVideos[userName] ?? false;
-    setState(() {
-      if (isPlaying) {
-        _playingVideos[userName] = false;
-      } else {
-        _playingVideos[userName] = true;
-        _videoProgress[userName] ??= 0.0;
-        _videoElapsed[userName] ??= 0;
-        _startVideoUpdateLoop(userName);
-      }
-    });
-  }
-
-  void _startVideoUpdateLoop(String userName) {
-    Future.doWhile(() async {
-      await Future.delayed(const Duration(milliseconds: 100));
-      if (!mounted || _playingVideos[userName] != true) {
-        return false;
-      }
-      setState(() {
-        double currentProgress = _videoProgress[userName] ?? 0.0;
-        int elapsed = _videoElapsed[userName] ?? 0;
-        currentProgress += 0.005; // Simulate 20s playback
-        if (currentProgress >= 1.0) {
-          currentProgress = 0.0;
-          elapsed = 0;
-          _playingVideos[userName] = false;
-        } else {
-          elapsed = (currentProgress * 20).toInt();
-        }
-        _videoProgress[userName] = currentProgress;
-        _videoElapsed[userName] = elapsed;
-      });
-      return true;
-    });
-  }
-
-  // Toggles follow/unfollow and refreshes layout
-  void _toggleFollow(Map<String, dynamic> post) {
-    setState(() {
-      final isFollowing = post['isFollowing'] == true;
-      post['isFollowing'] = !isFollowing;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            isFollowing
-                ? 'Unfollowed ${post['name']}'
-                : 'Following ${post['name']} now!',
-          ),
-          duration: const Duration(seconds: 1),
-          backgroundColor:
-              isFollowing ? const Color(0xFFCC0000) : const Color(0xFF27AE60),
-        ),
-      );
-    });
-    savePostsToLocal();
-  }
-
-  // Toggle Bookmark
-  void _toggleBookmark(Map<String, dynamic> post) {
-    setState(() {
-      final isBookmarked = post['isBookmarked'] == true;
-      post['isBookmarked'] = !isBookmarked;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            isBookmarked
-                ? 'Removed from Saved Items'
-                : 'Saved post successfully!',
-          ),
-          duration: const Duration(seconds: 1),
-          backgroundColor: const Color(0xFF121214),
-        ),
-      );
-    });
-    savePostsToLocal();
-  }
-
-  // Native share action
-  void _sharePost(Map<String, dynamic> post) {
-    Share.share(
-      'Check out this update by ${post['name']} in Tamil Business Tribe:\n\n"${post['content']}"',
-      subject: 'Post by ${post['name']}',
-    );
-    setState(() {
-      post['shares'] = (post['shares'] as int) + 1;
-    });
-    savePostsToLocal();
-  }
-
-  // Report post mock dialogue
-  void _reportPost(String userName) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-            'Thank you! Post from $userName has been reported for review.'),
-        backgroundColor: const Color(0xFFCC0000),
-      ),
-    );
-  }
-
-  // Mock message window
-  void _showMessagePrompt(String userName) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Starting chat thread with $userName...'),
-        backgroundColor: const Color(0xFF2F80ED),
-      ),
-    );
-  }
-
-  // Posts authored by the current user should always show their live
-  // profile photo (the exact same ProfileScreen.profileImagePath source
-  // Home already reads), not whatever avatarUrl was captured when the post
-  // was created — mirrors the isCurrentUser pattern already used for the
-  // Leaderboard's own avatar in main.dart.
-  String _resolvePostAvatar(Map<String, dynamic> post) {
-    final isOwnPost = post['name'] == 'Sakthi (You)';
-    final livePhoto = ProfileScreen.profileImagePath;
-    if (isOwnPost && livePhoto != null && livePhoto.isNotEmpty) {
-      return livePhoto;
-    }
-    final stored = post['avatarUrl']?.toString();
-    return (stored != null && stored.isNotEmpty)
-        ? stored
-        : 'assets/images/nav  bar.jpeg';
-  }
-
-  // Detail user profile sheet
-  void _showUserProfile(Map<String, dynamic> post) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: context.cardBg,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24.0)),
-      ),
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            final isFollowing = post['isFollowing'] == true;
-            return Container(
+            child: SingleChildScrollView(
               padding: const EdgeInsets.all(24.0),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -492,7 +347,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
                   ),
                   const SizedBox(height: 24.0),
                   Builder(builder: (context) {
-                    final avatarSrc = _resolvePostAvatar(post);
+                    final avatarSrc = resolvePostAvatar(post);
                     return GestureDetector(
                       onTap: () => showProfilePhotoDialog(context, avatarSrc),
                       child: CircleAvatar(
@@ -505,9 +360,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
                                   width: 80.0,
                                   height: 80.0,
                                   fit: BoxFit.cover,
-                                  errorBuilder:
-                                      (context, error, stackTrace) =>
-                                          Container(
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      Container(
                                     color: context.cardBg,
                                     child: Center(
                                       child: Text(
@@ -594,7 +448,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
                       borderRadius: BorderRadius.circular(12.0),
                     ),
                     child: Text(
-                      'Member ID: TBT-${post['name'].hashCode.abs().toString().substring(0, 5)}',
+                      'Member ID: ${memberIdFor(post['name'] as String)}',
                       style: const TextStyle(
                         color: Color(0xFFCC0000),
                         fontWeight: FontWeight.bold,
@@ -603,62 +457,326 @@ class _CommunityScreenState extends State<CommunityScreen> {
                     ),
                   ),
                   const SizedBox(height: 24.0),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: isFollowing
-                                ? context.borderCol
-                                : const Color(0xFFCC0000),
-                            foregroundColor: context.textColor,
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 24.0, vertical: 12.0),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12.0)),
-                          ),
-                          icon: Icon(isFollowing
-                              ? Icons.person_remove_rounded
-                              : Icons.person_add_rounded),
-                          label: Text(isFollowing ? 'Unfollow' : 'Follow',
-                              overflow: TextOverflow.ellipsis),
-                          onPressed: () {
-                            setModalState(() {
-                              _toggleFollow(post);
-                            });
-                          },
-                        ),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: isFollowing
+                            ? context.borderCol
+                            : const Color(0xFFCC0000),
+                        foregroundColor: context.textColor,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 24.0, vertical: 12.0),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12.0)),
                       ),
-                      const SizedBox(width: 12.0),
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: context.borderCol,
-                            foregroundColor: context.textColor,
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 24.0, vertical: 12.0),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12.0)),
-                          ),
-                          icon: const Icon(Icons.message_rounded),
-                          label: const Text('Message',
-                              overflow: TextOverflow.ellipsis),
-                          onPressed: () {
-                            Navigator.pop(context);
-                            _showMessagePrompt(post['name']);
-                          },
-                        ),
-                      ),
-                    ],
+                      icon: Icon(isFollowing
+                          ? Icons.person_remove_rounded
+                          : Icons.person_add_rounded),
+                      label: Text(isFollowing ? 'Unfollow' : 'Follow',
+                          overflow: TextOverflow.ellipsis),
+                      onPressed: () async {
+                        await onToggleFollow(post);
+                        setModalState(() {});
+                      },
+                    ),
                   ),
                   const SizedBox(height: 16.0),
                 ],
               ),
-            );
-          },
+            ),
+          );
+        },
+      );
+    },
+  );
+}
+
+class _CommunityScreenState extends State<CommunityScreen> {
+  int _activeTab = 0; // 0: For You, 1: Following, 2: Mentors
+
+  // Simulated Video Player States
+  final Map<String, bool> _playingVideos = {};
+  final Map<String, double> _videoProgress = {};
+  final Map<String, int> _videoElapsed = {};
+
+  // Search state
+  bool _isSearching = false;
+  String _searchQuery = '';
+  final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    NotificationBadge.instance.ensureLoaded();
+    _loadPersistedPosts();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadPersistedPosts() async {
+    await loadPostsFromLocal();
+    if (mounted) {
+      setState(() {});
+    }
+    await _fetchPostsFromSupabase();
+  }
+
+  Future<void> _fetchPostsFromSupabase() async {
+    try {
+      final response = await Supabase.instance.client
+          .from('posts')
+          .select()
+          .eq('is_approved', true)
+          .order('created_at', ascending: false);
+
+      final followedNames =
+          await ConnectionsService.instance.fetchFollowedNames();
+      final List<Map<String, dynamic>> fetchedPosts = [];
+      for (var row in response) {
+        final post = mapSupabasePostToFeedItem(row);
+        post['isFollowing'] = followedNames.contains(post['name']);
+        fetchedPosts.add(post);
+      }
+
+      if (mounted) {
+        setState(() {
+          communityPosts.clear();
+          communityPosts.addAll(fetchedPosts);
+        });
+        await savePostsToLocal();
+      }
+    } catch (e) {
+      debugPrint('Error fetching posts from Supabase: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content:
+                const Text('Failed to refresh feed. Showing last saved posts.'),
+            action: SnackBarAction(
+              label: 'RETRY',
+              onPressed: _fetchPostsFromSupabase,
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  // Opens the shared "What did you achieve today?" composer (same widget
+  // Home uses) inline on this page as a bottom sheet. Scrollable and
+  // keyboard-aware so it doesn't overflow on small screens or when the
+  // keyboard is open. Submitting still goes through the composer's own
+  // existing save-as-pending / admin-approval logic unchanged; this only
+  // closes the sheet and refreshes the feed afterward.
+  void _openPostComposer() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: context.cardBg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24.0)),
+      ),
+      builder: (sheetContext) {
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
+          ),
+          child: SafeArea(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(sheetContext).size.height * 0.9,
+              ),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16.0, 12.0, 16.0, 20.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40.0,
+                        height: 4.0,
+                        decoration: BoxDecoration(
+                          color: context.borderCol,
+                          borderRadius: BorderRadius.circular(2.0),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16.0),
+                    AchievementComposer(
+                      onPosted: () {
+                        Navigator.pop(sheetContext);
+                        _fetchPostsFromSupabase();
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         );
       },
+    );
+  }
+
+  void _togglePlayVideo(String userName) {
+    final isPlaying = _playingVideos[userName] ?? false;
+    setState(() {
+      if (isPlaying) {
+        _playingVideos[userName] = false;
+      } else {
+        _playingVideos[userName] = true;
+        _videoProgress[userName] ??= 0.0;
+        _videoElapsed[userName] ??= 0;
+        _startVideoUpdateLoop(userName);
+      }
+    });
+  }
+
+  void _startVideoUpdateLoop(String userName) {
+    Future.doWhile(() async {
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (!mounted || _playingVideos[userName] != true) {
+        return false;
+      }
+      setState(() {
+        double currentProgress = _videoProgress[userName] ?? 0.0;
+        int elapsed = _videoElapsed[userName] ?? 0;
+        currentProgress += 0.005; // Simulate 20s playback
+        if (currentProgress >= 1.0) {
+          currentProgress = 0.0;
+          elapsed = 0;
+          _playingVideos[userName] = false;
+        } else {
+          elapsed = (currentProgress * 20).toInt();
+        }
+        _videoProgress[userName] = currentProgress;
+        _videoElapsed[userName] = elapsed;
+      });
+      return true;
+    });
+  }
+
+  // Toggles follow/unfollow, persists it to `user_connections` (so Profile's
+  // Connections count and follow state survive an app restart), and keeps
+  // every other post by the same author in sync (the local `communityPosts`
+  // list has one entry per post, not per author, so the same person can
+  // appear on several cards).
+  Future<void> _toggleFollow(Map<String, dynamic> post) async {
+    final name = post['name'] as String;
+    if (name == 'Sakthi (You)') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("You can't follow yourself."),
+          duration: Duration(seconds: 1),
+          backgroundColor: Color(0xFFCC0000),
+        ),
+      );
+      return;
+    }
+
+    final wasFollowing = post['isFollowing'] == true;
+    setState(() {
+      for (final p in communityPosts) {
+        if (p['name'] == name) p['isFollowing'] = !wasFollowing;
+      }
+    });
+
+    try {
+      if (wasFollowing) {
+        await ConnectionsService.instance.unfollow(name);
+      } else {
+        await ConnectionsService.instance.follow(name);
+      }
+    } catch (e) {
+      // Revert on failure so the UI never shows a follow state that wasn't
+      // actually saved.
+      if (mounted) {
+        setState(() {
+          for (final p in communityPosts) {
+            if (p['name'] == name) p['isFollowing'] = wasFollowing;
+          }
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to update follow status. Please try again.'),
+            backgroundColor: Color(0xFFCC0000),
+          ),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          wasFollowing ? 'Unfollowed $name' : 'Following $name now!',
+        ),
+        duration: const Duration(seconds: 1),
+        backgroundColor:
+            wasFollowing ? const Color(0xFFCC0000) : const Color(0xFF27AE60),
+      ),
+    );
+    savePostsToLocal();
+  }
+
+  // Toggle Bookmark
+  void _toggleBookmark(Map<String, dynamic> post) {
+    setState(() {
+      final isBookmarked = post['isBookmarked'] == true;
+      post['isBookmarked'] = !isBookmarked;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isBookmarked
+                ? 'Removed from Saved Items'
+                : 'Saved post successfully!',
+          ),
+          duration: const Duration(seconds: 1),
+          backgroundColor: const Color(0xFF121214),
+        ),
+      );
+    });
+    savePostsToLocal();
+  }
+
+  // Native share action
+  void _sharePost(Map<String, dynamic> post) {
+    Share.share(
+      'Check out this update by ${post['name']} in Tamil Business Tribe:\n\n"${post['content']}"',
+      subject: 'Post by ${post['name']}',
+    );
+    setState(() {
+      post['shares'] = (post['shares'] as int) + 1;
+    });
+    savePostsToLocal();
+  }
+
+  // Report post mock dialogue
+  void _reportPost(String userName) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+            'Thank you! Post from $userName has been reported for review.'),
+        backgroundColor: const Color(0xFFCC0000),
+      ),
+    );
+  }
+
+  // Mock message window
+  void _showMessagePrompt(String userName) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Starting chat thread with $userName...'),
+        backgroundColor: const Color(0xFF2F80ED),
+      ),
     );
   }
 
@@ -972,8 +1090,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
                                       : Colors.black.withOpacity(0.05),
                                   borderRadius: BorderRadius.circular(20.0),
                                 ),
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 16.0),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 16.0),
                                 child: TextField(
                                   controller: _searchController,
                                   autofocus: true,
@@ -981,7 +1099,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
                                       color: context.textColor, fontSize: 14.0),
                                   cursorColor: const Color(0xFFCC0000),
                                   decoration: InputDecoration(
-                                    hintText: 'Search posts, authors, badges...',
+                                    hintText:
+                                        'Search posts, authors, badges...',
                                     hintStyle: TextStyle(
                                         color: context.subTextColor,
                                         fontSize: 13.0),
@@ -1012,125 +1131,117 @@ class _CommunityScreenState extends State<CommunityScreen> {
                               ),
                           ]
                         : [
-                      Builder(
-                        builder: (ctx) => GestureDetector(
-                          onTap: () => Scaffold.of(ctx).openDrawer(),
-                          child: Icon(
-                            Icons.menu,
-                            color: context.textColor,
-                            size: 26.0,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 16.0),
-                      Flexible(
-                        child: Text(
-                          'Community',
-                          overflow: TextOverflow.ellipsis,
-                          maxLines: 1,
-                          style: TextStyle(
-                            color: context.textColor,
-                            fontSize: 22.0,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      const Spacer(),
-                      GestureDetector(
-                        onTap: () => setState(() => _isSearching = true),
-                        child: Icon(
-                          Icons.search,
-                          color: context.textColor,
-                          size: 24.0,
-                        ),
-                      ),
-                      const SizedBox(width: 16.0),
-                      // Notification Bell with Badge
-                      GestureDetector(
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const NotificationsScreen(),
-                            ),
-                          ).then((_) => NotificationBadge.instance.refresh());
-                        },
-                        child: AnimatedBuilder(
-                          animation: NotificationBadge.instance,
-                          builder: (context, _) {
-                            final count =
-                                NotificationBadge.instance.unreadCount;
-                            return Stack(
-                              clipBehavior: Clip.none,
-                              children: [
-                                Icon(
-                                  Icons.notifications_none,
+                            Builder(
+                              builder: (ctx) => GestureDetector(
+                                onTap: () => Scaffold.of(ctx).openDrawer(),
+                                child: Icon(
+                                  Icons.menu,
                                   color: context.textColor,
-                                  size: 24.0,
+                                  size: 26.0,
                                 ),
-                                if (count > 0)
-                                  Positioned(
-                                    right: -2,
-                                    top: -2,
-                                    child: Container(
-                                      padding: const EdgeInsets.all(3.0),
-                                      decoration: const BoxDecoration(
-                                        color: Color(0xFFCC0000),
-                                        shape: BoxShape.circle,
-                                      ),
-                                      constraints: const BoxConstraints(
-                                        minWidth: 14,
-                                        minHeight: 14,
-                                      ),
-                                      child: Text(
-                                        count > 9 ? '9+' : '$count',
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 8.0,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                        textAlign: TextAlign.center,
-                                      ),
-                                    ),
+                              ),
+                            ),
+                            const SizedBox(width: 16.0),
+                            Flexible(
+                              child: Text(
+                                'Community',
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
+                                style: TextStyle(
+                                  color: context.textColor,
+                                  fontSize: 22.0,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            const Spacer(),
+                            GestureDetector(
+                              onTap: () => setState(() => _isSearching = true),
+                              child: Icon(
+                                Icons.search,
+                                color: context.textColor,
+                                size: 24.0,
+                              ),
+                            ),
+                            const SizedBox(width: 16.0),
+                            // Notification Bell with Badge
+                            GestureDetector(
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        const NotificationsScreen(),
                                   ),
-                              ],
-                            );
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 16.0),
-                      // Red circle plus button — opens the existing post
-                      // composer, which lives on the Home screen underneath
-                      // this one (there is no separate Create Post route).
-                      // popUntil(isFirst) isn't reliable here because this
-                      // app's actual root route isn't always Home depending
-                      // on how this screen was reached, so this explicitly
-                      // clears the stack down to a fresh Home instead —
-                      // the composer defaults to expanded/scrolled-to-top,
-                      // so it's already in view with no extra signalling.
-                      GestureDetector(
-                        onTap: () {
-                          Navigator.of(context).pushAndRemoveUntil(
-                            MaterialPageRoute(
-                                builder: (context) => const PostPopupScreen()),
-                            (route) => false,
-                          );
-                        },
-                        child: Container(
-                          width: 32.0,
-                          height: 32.0,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFFCC0000),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.add,
-                            color: Colors.white,
-                            size: 20.0,
-                          ),
-                        ),
-                      ),
-                    ],
+                                ).then((_) =>
+                                    NotificationBadge.instance.refresh());
+                              },
+                              child: AnimatedBuilder(
+                                animation: NotificationBadge.instance,
+                                builder: (context, _) {
+                                  final count =
+                                      NotificationBadge.instance.unreadCount;
+                                  return Stack(
+                                    clipBehavior: Clip.none,
+                                    children: [
+                                      Icon(
+                                        Icons.notifications_none,
+                                        color: context.textColor,
+                                        size: 24.0,
+                                      ),
+                                      if (count > 0)
+                                        Positioned(
+                                          right: -2,
+                                          top: -2,
+                                          child: Container(
+                                            padding: const EdgeInsets.all(3.0),
+                                            decoration: const BoxDecoration(
+                                              color: Color(0xFFCC0000),
+                                              shape: BoxShape.circle,
+                                            ),
+                                            constraints: const BoxConstraints(
+                                              minWidth: 14,
+                                              minHeight: 14,
+                                            ),
+                                            child: Text(
+                                              count > 9 ? '9+' : '$count',
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 8.0,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                              textAlign: TextAlign.center,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  );
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 16.0),
+                            // Red circle plus button — opens the exact same
+                            // "What did you achieve today?" composer used on Home
+                            // (AchievementComposer, extracted from PostPopupScreen
+                            // so both screens share one implementation), inline on
+                            // this page as a bottom sheet instead of navigating away.
+                            GestureDetector(
+                              onTap: _openPostComposer,
+                              child: Container(
+                                width: 32.0,
+                                height: 32.0,
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFFCC0000),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.add,
+                                  color: Colors.white,
+                                  size: 20.0,
+                                ),
+                              ),
+                            ),
+                          ],
                   ),
                 ),
 
@@ -1139,9 +1250,13 @@ class _CommunityScreenState extends State<CommunityScreen> {
                   padding: const EdgeInsets.symmetric(vertical: 8.0),
                   child: Row(
                     children: [
-                      Expanded(child: Center(child: _buildTabButton('For You', 0))),
-                      Expanded(child: Center(child: _buildTabButton('Following', 1))),
-                      Expanded(child: Center(child: _buildTabButton('Mentors', 2))),
+                      Expanded(
+                          child: Center(child: _buildTabButton('For You', 0))),
+                      Expanded(
+                          child:
+                              Center(child: _buildTabButton('Following', 1))),
+                      Expanded(
+                          child: Center(child: _buildTabButton('Mentors', 2))),
                     ],
                   ),
                 ),
@@ -1158,7 +1273,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
                             child: _buildEmptyState(),
                           )
                         : ListView.builder(
-                            physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+                            physics: const AlwaysScrollableScrollPhysics(
+                                parent: BouncingScrollPhysics()),
                             itemCount: filteredPosts.length,
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 16.0, vertical: 8.0),
@@ -1179,7 +1295,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
                                 decoration: BoxDecoration(
                                   borderRadius: BorderRadius.circular(16.0),
                                   border: Border.all(
-                                      color: const Color(0xFFD30814), width: 2.0),
+                                      color: const Color(0xFFD30814),
+                                      width: 2.0),
                                 ),
                                 child: card,
                               );
@@ -1264,7 +1381,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
   }
 
   Widget _buildPostCard(Map<String, dynamic> post) {
-    final avatarSrc = _resolvePostAvatar(post);
+    final avatarSrc = resolvePostAvatar(post);
     return Container(
       margin: const EdgeInsets.only(bottom: 24.0),
       child: Column(
@@ -1275,7 +1392,9 @@ class _CommunityScreenState extends State<CommunityScreen> {
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               GestureDetector(
-                onTap: () => _showUserProfile(post),
+                onTap: () => showUserProfileSheet(context, post,
+                    onToggleFollow: _toggleFollow,
+                    onMessage: _showMessagePrompt),
                 child: CircleAvatar(
                   radius: 20.0,
                   backgroundColor: context.cardBg,
@@ -1348,7 +1467,9 @@ class _CommunityScreenState extends State<CommunityScreen> {
                       children: [
                         Flexible(
                           child: GestureDetector(
-                            onTap: () => _showUserProfile(post),
+                            onTap: () => showUserProfileSheet(context, post,
+                                onToggleFollow: _toggleFollow,
+                                onMessage: _showMessagePrompt),
                             child: Text(
                               post['name'] as String,
                               overflow: TextOverflow.ellipsis,

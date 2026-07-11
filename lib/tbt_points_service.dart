@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'connections_service.dart';
 import 'podcast_service.dart';
 
 /// One educational task definition merged with the current user's progress
@@ -126,11 +127,10 @@ class TbtPointsService {
       final userId = await getOrCreateAnonymousUserId();
       final totalPoints = await _fetchTotalPoints(userId);
       final dailyStreak = await _fetchDailyStreak(userId);
+      final connections = await ConnectionsService.instance.fetchConnectionsCount();
       return {
         'dailyStreak': dailyStreak,
-        // No connections/social-graph table exists anywhere in the backend —
-        // there is genuinely nothing to count, so this is honestly 0.
-        'connections': 0,
+        'connections': connections,
         'tbtPoints': totalPoints,
       };
     } catch (e) {
