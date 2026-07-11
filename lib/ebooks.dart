@@ -287,7 +287,9 @@ Widget buildLibraryRow(
                 ),
                 const SizedBox(height: 3.0),
                 Text(
-                  (book['author'] as String?)?.trim().isNotEmpty == true ? book['author'] as String : 'Unknown Author',
+                  (book['author'] as String?)?.trim().isNotEmpty == true
+                      ? book['author'] as String
+                      : 'Unknown Author',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: context.subTextColor, fontSize: 11.5),
@@ -405,11 +407,11 @@ class _EBooksLibraryScreenState extends State<EBooksLibraryScreen> {
   List<Map<String, dynamic>> _library = [];
   Map<String, dynamic>? _banner;
 
-  // When a category/author chip other than "All" is selected, this holds
-  // every active book in that category (fetched via the same DB-backed
-  // fetchBooks query AllBooksCatalogScreen uses) — not just the user's
-  // bookmarked "Your Library" items, since that list is usually empty and
-  // was the reason the chips looked broken.
+  // The DB-backed catalog list shown below the chips (see
+  // _refreshCatalogResults) — every active book for "All", or narrowed to
+  // one category/search term. Never the user's bookmarked "Your Library"
+  // items (that list is usually empty/small and has its own dedicated
+  // SavedBooksScreen) — using it here was why "All" looked broken.
   List<Map<String, dynamic>>? _catalogResults;
   bool _catalogLoading = false;
 
@@ -454,6 +456,7 @@ class _EBooksLibraryScreenState extends State<EBooksLibraryScreen> {
         _banner = results[3] as Map<String, dynamic>?;
         _isLoading = false;
       });
+      await _refreshCatalogResults();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -468,19 +471,21 @@ class _EBooksLibraryScreenState extends State<EBooksLibraryScreen> {
     if (userId == null) return;
     await EBookService.instance.toggleBookmark(userId, bookId);
     await _loadAll();
-    if (_selectedCategoryId != null) await _refreshCatalogResults();
   }
 
   Future<void> _onCategorySelected(String? categoryId) async {
+    if (categoryId == _selectedCategoryId) return;
     setState(() => _selectedCategoryId = categoryId);
     await _refreshCatalogResults();
   }
 
+  // Single source of truth for the catalog grid below the chips, for both
+  // "All" (categoryId null — fetchBooks applies no category filter, so this
+  // returns every active/published book) and a specific category/search.
+  // "Your Library" (bookmarks) is intentionally NOT used here anymore — that
+  // has its own dedicated SavedBooksScreen — so the "All" chip always shows
+  // the real catalog instead of the (often near-empty) personal library.
   Future<void> _refreshCatalogResults() async {
-    if (_selectedCategoryId == null) {
-      if (mounted) setState(() => _catalogResults = null);
-      return;
-    }
     setState(() => _catalogLoading = true);
     try {
       final books = await EBookService.instance.fetchBooks(
@@ -492,11 +497,18 @@ class _EBooksLibraryScreenState extends State<EBooksLibraryScreen> {
           .where((b) => b['isBookmarked'] == true)
           .map((b) => b['id'])
           .toSet();
+      // Defensive de-dup by book id — the backend query shouldn't produce
+      // duplicates, but this guarantees the list never shows one twice.
+      final seenIds = <dynamic>{};
+      final deduped = <Map<String, dynamic>>[];
+      for (final b in books) {
+        if (seenIds.add(b['id'])) {
+          deduped.add({...b, 'isBookmarked': bookmarkedIds.contains(b['id'])});
+        }
+      }
       if (!mounted) return;
       setState(() {
-        _catalogResults = books
-            .map((b) => {...b, 'isBookmarked': bookmarkedIds.contains(b['id'])})
-            .toList();
+        _catalogResults = deduped;
         _catalogLoading = false;
       });
     } catch (e) {
@@ -535,30 +547,22 @@ class _EBooksLibraryScreenState extends State<EBooksLibraryScreen> {
       return matchesSearch && matchesCategory;
     }).toList();
 
-    // "All" selected → the user's own bookmarked/in-progress library, as
-    // before. A specific chip selected → every active book in that
-    // category/author from the database (see _refreshCatalogResults), since
-    // the personal library is usually empty and isn't what the chips should
-    // be filtering.
-    final displayedBooks = _selectedCategoryId != null
-        ? (_catalogResults ?? const <Map<String, dynamic>>[])
-        : _library
-            .where((b) => (b['title'] as String? ?? '')
-                .toLowerCase()
-                .contains(_searchQuery.toLowerCase()))
-            .toList();
+    // Always the DB-backed catalog (see _refreshCatalogResults) — "All"
+    // fetches with no category filter (every active book), a chip narrows
+    // it to that category, and search narrows either. Never the personal
+    // "Your Library" list, which has its own dedicated SavedBooksScreen.
+    final displayedBooks = _catalogResults ?? const <Map<String, dynamic>>[];
 
     final String selectedCategoryName = _selectedCategoryId == null
         ? ''
-        : _categories
-            .firstWhere((c) => c['id'] == _selectedCategoryId,
-                orElse: () => const {'name': ''})['name'] as String;
+        : _categories.firstWhere((c) => c['id'] == _selectedCategoryId,
+            orElse: () => const {'name': ''})['name'] as String;
 
     final String sectionTitle = _searchQuery.isNotEmpty
         ? 'Search Results'
         : (_selectedCategoryId != null && selectedCategoryName.isNotEmpty)
             ? '$selectedCategoryName Books'
-            : 'Your Library';
+            : 'All Books';
 
     return Scaffold(
       backgroundColor: context.scaffoldBg,
@@ -594,7 +598,7 @@ class _EBooksLibraryScreenState extends State<EBooksLibraryScreen> {
                   autofocus: true,
                   onChanged: (val) {
                     setState(() => _searchQuery = val);
-                    if (_selectedCategoryId != null) _refreshCatalogResults();
+                    _refreshCatalogResults();
                   },
                 ),
               )
@@ -609,10 +613,13 @@ class _EBooksLibraryScreenState extends State<EBooksLibraryScreen> {
                 IconButton(
                   icon: Icon(Icons.close_rounded,
                       color: context.textColor, size: 22.0),
-                  onPressed: () => setState(() {
-                    _isSearching = false;
-                    _searchQuery = '';
-                  }),
+                  onPressed: () {
+                    setState(() {
+                      _isSearching = false;
+                      _searchQuery = '';
+                    });
+                    _refreshCatalogResults();
+                  },
                 ),
               ]
             : [
@@ -802,7 +809,7 @@ class _EBooksLibraryScreenState extends State<EBooksLibraryScreen> {
                               ],
                             ),
                             const SizedBox(height: 16.0),
-                            if (_selectedCategoryId != null && _catalogLoading)
+                            if (_catalogLoading)
                               const Padding(
                                 padding: EdgeInsets.symmetric(vertical: 24.0),
                                 child: Center(
@@ -932,7 +939,9 @@ class _FeaturedBookCard extends StatelessWidget {
             ),
             const SizedBox(height: 2.0),
             Text(
-              (book['author'] as String?)?.trim().isNotEmpty == true ? book['author'] as String : 'Unknown Author',
+              (book['author'] as String?)?.trim().isNotEmpty == true
+                  ? book['author'] as String
+                  : 'Unknown Author',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(color: context.subTextColor, fontSize: 11.0),
@@ -1491,8 +1500,8 @@ class _BookDetailsScreenState extends State<BookDetailsScreen> {
     }
 
     final userId = await EBookService.instance.getOrCreateAnonymousUserId();
-    final bookmarked = await EBookService.instance
-        .isBookmarked(userId, _book['id'] as String);
+    final bookmarked =
+        await EBookService.instance.isBookmarked(userId, _book['id'] as String);
     if (mounted) {
       setState(() {
         _userId = userId;
@@ -1539,10 +1548,8 @@ class _BookDetailsScreenState extends State<BookDetailsScreen> {
   }
 
   void _openReader() {
-    Navigator.push(
-        context,
-        MaterialPageRoute(
-            builder: (context) => BookReaderScreen(book: _book)));
+    Navigator.push(context,
+        MaterialPageRoute(builder: (context) => BookReaderScreen(book: _book)));
   }
 
   @override
@@ -1618,7 +1625,9 @@ class _BookDetailsScreenState extends State<BookDetailsScreen> {
                   children: [
                     Expanded(
                       child: Text(
-                        (book['author'] as String?)?.trim().isNotEmpty == true ? book['author'] as String : 'Unknown Author',
+                        (book['author'] as String?)?.trim().isNotEmpty == true
+                            ? book['author'] as String
+                            : 'Unknown Author',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -2132,57 +2141,57 @@ class _SavedBooksScreenState extends State<SavedBooksScreen> {
         ),
         child: SafeArea(
           child: RefreshIndicator(
-          color: _kEbookRed,
-          onRefresh: _load,
-          child: _isLoading
-              ? buildEbookLoadingState(context)
-              : _error != null
-                  ? buildEbookErrorState(context, _error!, _load)
-                  : _saved.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.bookmark_border_rounded,
-                                  color: Colors.white.withOpacity(0.15),
-                                  size: 64.0),
-                              const SizedBox(height: 16.0),
-                              const Text('No Saved Books yet',
-                                  style: TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 16.0,
-                                      fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 6.0),
-                              const Text(
-                                  'Tap the bookmark icon on any book to save it here.',
-                                  style: TextStyle(
-                                      color: Colors.white30, fontSize: 12.0)),
-                            ],
+            color: _kEbookRed,
+            onRefresh: _load,
+            child: _isLoading
+                ? buildEbookLoadingState(context)
+                : _error != null
+                    ? buildEbookErrorState(context, _error!, _load)
+                    : _saved.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.bookmark_border_rounded,
+                                    color: Colors.white.withOpacity(0.15),
+                                    size: 64.0),
+                                const SizedBox(height: 16.0),
+                                const Text('No Saved Books yet',
+                                    style: TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 16.0,
+                                        fontWeight: FontWeight.bold)),
+                                const SizedBox(height: 6.0),
+                                const Text(
+                                    'Tap the bookmark icon on any book to save it here.',
+                                    style: TextStyle(
+                                        color: Colors.white30, fontSize: 12.0)),
+                              ],
+                            ),
+                          )
+                        : ListView.builder(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 20.0, vertical: 16.0),
+                            physics: const BouncingScrollPhysics(),
+                            itemCount: _saved.length,
+                            itemBuilder: (context, index) {
+                              final book = _saved[index];
+                              return buildLibraryRow(
+                                context,
+                                book,
+                                onTap: () {
+                                  Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                              builder: (context) =>
+                                                  BookReaderScreen(book: book)))
+                                      .then((_) => _load());
+                                },
+                                onBookmarkToggle: () =>
+                                    _toggleBookmark(book['id'] as String),
+                              );
+                            },
                           ),
-                        )
-                      : ListView.builder(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 20.0, vertical: 16.0),
-                          physics: const BouncingScrollPhysics(),
-                          itemCount: _saved.length,
-                          itemBuilder: (context, index) {
-                            final book = _saved[index];
-                            return buildLibraryRow(
-                              context,
-                              book,
-                              onTap: () {
-                                Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                            builder: (context) =>
-                                                BookReaderScreen(book: book)))
-                                    .then((_) => _load());
-                              },
-                              onBookmarkToggle: () =>
-                                  _toggleBookmark(book['id'] as String),
-                            );
-                          },
-                        ),
           ),
         ),
       ),
