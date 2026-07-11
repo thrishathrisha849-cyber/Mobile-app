@@ -4122,131 +4122,119 @@ class _PostPopupScreenState extends State<PostPopupScreen> {
   }
 
   Widget _buildMenuGrid() {
+    final List<_HomeMenuItem> menuItems = [
+      _HomeMenuItem(
+        title: 'Community',
+        icon: Icons.groups_rounded,
+        color: const Color(0xFF00F2FE),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const CommunityScreen()),
+          ).then((value) {
+            if (value is int) {
+              setState(() {
+                _currentTabIndex = value;
+              });
+              if (value == 4) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const ProfileScreen()),
+                ).then((_) {
+                  setState(() {
+                    _currentTabIndex = 0;
+                  });
+                });
+              }
+            }
+          });
+        },
+      ),
+      _HomeMenuItem(
+        title: 'Courses',
+        icon: Icons.school_rounded,
+        color: const Color(0xFFF2994A),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const CoursesScreen()),
+          );
+        },
+      ),
+      _HomeMenuItem(
+        title: 'Podcast',
+        icon: Icons.podcasts_rounded,
+        color: const Color(0xFFE285FF),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const PodcastScreen()),
+          );
+        },
+      ),
+      _HomeMenuItem(
+        title: 'Workshop',
+        icon: Icons.co_present_rounded,
+        color: const Color(0xFFFF5E62),
+        onTap: () {},
+      ),
+      _HomeMenuItem(
+        title: 'E-Book',
+        icon: Icons.menu_book_rounded,
+        color: const Color(0xFF38EF7D),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (context) => const EBooksLibraryScreen()),
+          );
+        },
+      ),
+      _HomeMenuItem(
+        title: 'Task',
+        icon: Icons.task_alt_rounded,
+        color: const Color(0xFF2F80ED),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const TasksScreen()),
+          );
+        },
+      ),
+    ];
+
+    const List<Duration> rowDelays = [
+      Duration(milliseconds: 100),
+      Duration(milliseconds: 250),
+      Duration(milliseconds: 400),
+    ];
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        FadeInSlideTransition(
-          delay: const Duration(milliseconds: 100),
-          child: Row(
-            children: [
-              Expanded(
-                child: AnimatedGlassCard(
-                  title: 'Community',
-                  icon: Icons.groups_rounded,
-                  color: const Color(0xFF00F2FE),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => const CommunityScreen()),
-                    ).then((value) {
-                      if (value is int) {
-                        setState(() {
-                          _currentTabIndex = value;
-                        });
-                        if (value == 4) {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                                builder: (context) => const ProfileScreen()),
-                          ).then((_) {
-                            setState(() {
-                              _currentTabIndex = 0;
-                            });
-                          });
-                        }
-                      }
-                    });
-                  },
-                ),
-              ),
-              const SizedBox(width: 14.0),
-              Expanded(
-                child: AnimatedGlassCard(
-                  title: 'Courses',
-                  icon: Icons.school_rounded,
-                  color: const Color(0xFFF2994A),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => const CoursesScreen()),
-                    );
-                  },
-                ),
-              ),
-            ],
+      children: List.generate(3, (rowIndex) {
+        final rowItems = menuItems.sublist(rowIndex * 2, rowIndex * 2 + 2);
+        return Padding(
+          padding: EdgeInsets.only(top: rowIndex == 0 ? 0.0 : 14.0),
+          child: FadeInSlideTransition(
+            delay: rowDelays[rowIndex],
+            child: Row(
+              children: [
+                for (int i = 0; i < rowItems.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 14.0),
+                  Expanded(
+                    child: AnimatedGlassCard(
+                      title: rowItems[i].title,
+                      icon: rowItems[i].icon,
+                      color: rowItems[i].color,
+                      onTap: rowItems[i].onTap,
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
-        ),
-        const SizedBox(height: 14.0),
-        FadeInSlideTransition(
-          delay: const Duration(milliseconds: 250),
-          child: Row(
-            children: [
-              Expanded(
-                child: AnimatedGlassCard(
-                  title: 'Podcast',
-                  icon: Icons.podcasts_rounded,
-                  color: const Color(0xFFE285FF),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => const PodcastScreen()),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(width: 14.0),
-              Expanded(
-                child: AnimatedGlassCard(
-                  title: 'Workshop',
-                  icon: Icons.co_present_rounded,
-                  color: const Color(0xFFFF5E62),
-                  onTap: () {},
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 14.0),
-        FadeInSlideTransition(
-          delay: const Duration(milliseconds: 400),
-          child: Row(
-            children: [
-              Expanded(
-                child: AnimatedGlassCard(
-                  title: 'E-Book',
-                  icon: Icons.menu_book_rounded,
-                  color: const Color(0xFF38EF7D),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => const EBooksLibraryScreen()),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(width: 14.0),
-              Expanded(
-                child: AnimatedGlassCard(
-                  title: 'Task',
-                  icon: Icons.task_alt_rounded,
-                  color: const Color(0xFF2F80ED),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => const TasksScreen()),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
+        );
+      }),
     );
   }
 
@@ -5289,6 +5277,22 @@ class _FadeInSlideTransitionState extends State<FadeInSlideTransition>
   }
 }
 
+/// Data model for a Home page menu card. [color] is reused for both the
+/// icon and the card's border so they always stay in sync.
+class _HomeMenuItem {
+  final String title;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _HomeMenuItem({
+    required this.title,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+}
+
 class AnimatedGlassCard extends StatefulWidget {
   final String title;
   final IconData icon;
@@ -5342,8 +5346,8 @@ class _AnimatedGlassCardState extends State<AnimatedGlassCard> {
             color: context.cardBg,
             borderRadius: BorderRadius.circular(16.0),
             border: Border.all(
-              color: context.borderCol,
-              width: 1.0,
+              color: widget.color.withOpacity(0.6),
+              width: 1.4,
             ),
             boxShadow: [
               BoxShadow(
