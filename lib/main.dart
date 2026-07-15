@@ -21,6 +21,7 @@ import 'course_quest.dart';
 import 'podcast.dart';
 import 'ebooks.dart';
 import 'courses.dart';
+import 'ai_content_screen.dart';
 import 'task.dart';
 import 'firebase_notification_service.dart';
 import 'firebase_options.dart';
@@ -699,7 +700,7 @@ class _TbtAppDrawerState extends State<TbtAppDrawer>
   late Animation<Offset> _headerSlide;
 
   // 9 nav items + 1 logout = 10 staggered controllers
-  final int _itemCount = 10;
+  final int _itemCount = 11;
   late List<AnimationController> _itemCtrls;
   late List<Animation<double>> _itemFades;
   late List<Animation<Offset>> _itemSlides;
@@ -1032,6 +1033,19 @@ class _TbtAppDrawerState extends State<TbtAppDrawer>
                         },
                       )),
                       animItem(7, _TbtDrawerItem(
+                        icon: Icons.auto_awesome_rounded,
+                        label: 'Content Buddy AI',
+                        onTap: () {
+                          Navigator.pop(context);
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (context) =>
+                                    const AIContentScreen()),
+                          );
+                        },
+                      )),
+                      animItem(8, _TbtDrawerItem(
                         icon: Icons.notifications_rounded,
                         label: 'Notifications',
                         onTap: () {
@@ -1044,7 +1058,7 @@ class _TbtAppDrawerState extends State<TbtAppDrawer>
                           );
                         },
                       )),
-                      animItem(8, _TbtDrawerItem(
+                      animItem(9, _TbtDrawerItem(
                         icon: Icons.person_rounded,
                         label: 'My Profile',
                         onTap: () {
@@ -1063,7 +1077,7 @@ class _TbtAppDrawerState extends State<TbtAppDrawer>
 
                 // ── Animated Footer – Logout ──────────────────────
                 animItem(
-                  9,
+                  10,
                   Container(
                     margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                     padding: const EdgeInsets.only(top: 8),
@@ -4126,7 +4140,7 @@ class _PostPopupScreenState extends State<PostPopupScreen> {
       _HomeMenuItem(
         title: 'Community',
         icon: Icons.groups_rounded,
-        color: const Color(0xFF00F2FE),
+        color: const Color(0xFFE50914),
         onTap: () {
           Navigator.push(
             context,
@@ -4153,7 +4167,7 @@ class _PostPopupScreenState extends State<PostPopupScreen> {
       _HomeMenuItem(
         title: 'Courses',
         icon: Icons.school_rounded,
-        color: const Color(0xFFF2994A),
+        color: const Color(0xFFE50914),
         onTap: () {
           Navigator.push(
             context,
@@ -4164,7 +4178,7 @@ class _PostPopupScreenState extends State<PostPopupScreen> {
       _HomeMenuItem(
         title: 'Podcast',
         icon: Icons.podcasts_rounded,
-        color: const Color(0xFFE285FF),
+        color: const Color(0xFFE50914),
         onTap: () {
           Navigator.push(
             context,
@@ -4175,13 +4189,13 @@ class _PostPopupScreenState extends State<PostPopupScreen> {
       _HomeMenuItem(
         title: 'Workshop',
         icon: Icons.co_present_rounded,
-        color: const Color(0xFFFF5E62),
+        color: const Color(0xFFE50914),
         onTap: () {},
       ),
       _HomeMenuItem(
         title: 'E-Book',
         icon: Icons.menu_book_rounded,
-        color: const Color(0xFF38EF7D),
+        color: const Color(0xFFE50914),
         onTap: () {
           Navigator.push(
             context,
@@ -4193,7 +4207,7 @@ class _PostPopupScreenState extends State<PostPopupScreen> {
       _HomeMenuItem(
         title: 'Task',
         icon: Icons.task_alt_rounded,
-        color: const Color(0xFF2F80ED),
+        color: const Color(0xFFE50914),
         onTap: () {
           Navigator.push(
             context,
@@ -5315,44 +5329,55 @@ class AnimatedGlassCard extends StatefulWidget {
 
 class _AnimatedGlassCardState extends State<AnimatedGlassCard> {
   double _scale = 1.0;
+  bool _pressed = false;
+
+  // Fixed black + red premium theme for the Home menu cards. Not tied to
+  // the app's light/dark toggle since these cards keep one consistent look.
+  static const Color _cardBackground = Color(0xFF0B0B0D);
+  static const Color _cardBackgroundPressed = Color(0xFF1A0709);
+  // Dedicated crimson border tone, independent of the per-card icon color.
+  static const Color _cardBorderColor = Color(0xFFB22222);
 
   @override
   Widget build(BuildContext context) {
-    final isDark = context.isDark;
     return GestureDetector(
       onTapDown: (_) {
         setState(() {
           _scale = 0.94;
+          _pressed = true;
         });
       },
       onTapUp: (_) {
         setState(() {
           _scale = 1.0;
+          _pressed = false;
         });
         widget.onTap();
       },
       onTapCancel: () {
         setState(() {
           _scale = 1.0;
+          _pressed = false;
         });
       },
       child: AnimatedScale(
         scale: _scale,
         duration: const Duration(milliseconds: 150),
         curve: Curves.easeOutBack,
-        child: Container(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
           height: widget.isFullWidth ? 80.0 : 110.0,
           decoration: BoxDecoration(
-            color: context.cardBg,
+            color: _pressed ? _cardBackgroundPressed : _cardBackground,
             borderRadius: BorderRadius.circular(16.0),
             border: Border.all(
-              color: widget.color.withOpacity(0.6),
+              color: _cardBorderColor.withOpacity(_pressed ? 1.0 : 0.85),
               width: 1.4,
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(isDark ? 0.2 : 0.05),
-                blurRadius: 10.0,
+                color: _cardBorderColor.withOpacity(_pressed ? 0.3 : 0.15),
+                blurRadius: 14.0,
                 offset: const Offset(0, 4),
               ),
             ],
@@ -5367,8 +5392,8 @@ class _AnimatedGlassCardState extends State<AnimatedGlassCard> {
                       const SizedBox(width: 12.0),
                       Text(
                         widget.title,
-                        style: TextStyle(
-                          color: context.textColor,
+                        style: const TextStyle(
+                          color: Colors.white,
                           fontSize: 16.0,
                           fontWeight: FontWeight.bold,
                           letterSpacing: 0.5,
@@ -5383,8 +5408,8 @@ class _AnimatedGlassCardState extends State<AnimatedGlassCard> {
                       const SizedBox(height: 10.0),
                       Text(
                         widget.title,
-                        style: TextStyle(
-                          color: context.textColor,
+                        style: const TextStyle(
+                          color: Colors.white,
                           fontSize: 14.5,
                           fontWeight: FontWeight.bold,
                           letterSpacing: 0.5,

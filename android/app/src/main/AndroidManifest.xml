@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Required for Content Buddy AI's voice input (speech_to_text) -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <application
         android:label="TBT"

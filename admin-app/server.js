@@ -36,6 +36,9 @@ app.use((req, res, next) => {
 
 // API Routes
 
+// AI Content Creation Assistant ("Content Buddy AI") — see specs/001-ai-content-assistant/
+app.use('/api/ai', require('./routes/ai'));
+
 // Get all posts
 app.get('/api/posts', async (req, res) => {
   try {
