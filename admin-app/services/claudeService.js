@@ -143,7 +143,8 @@ async function generateContent({ history, message, image, isFirstTurn, context }
   const model = process.env.CLAUDE_MODEL || 'claude-sonnet-4-5';
 
   if (!apiKey || apiKey.includes('REPLACE_WITH')) {
-    throw new ClaudeServiceError('claude_error', 'ANTHROPIC_API_KEY is not configured on the server.');
+    console.error('[claudeService] ANTHROPIC_API_KEY is missing or a placeholder value.');
+    throw new ClaudeServiceError('claude_not_configured', 'AI service is not configured. Please contact support.');
   }
 
   const system = SYSTEM_PROMPT + buildContextHint(context || {}) + (isFirstTurn ? TITLE_INSTRUCTION : '');
@@ -153,6 +154,8 @@ async function generateContent({ history, message, image, isFirstTurn, context }
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   let response;
+  const requestSummary = `model=${model} isFirstTurn=${isFirstTurn} historyLen=${history.length} hasImage=${!!image}`;
+  console.log(`[claudeService] -> POST ${ANTHROPIC_API_URL} (${requestSummary})`);
   try {
     response = await fetch(ANTHROPIC_API_URL, {
       method: 'POST',
@@ -166,8 +169,10 @@ async function generateContent({ history, message, image, isFirstTurn, context }
     });
   } catch (err) {
     if (err.name === 'AbortError') {
-      throw new ClaudeServiceError('claude_timeout', 'The AI took too long to respond. Please try again.');
+      console.error(`[claudeService] request timed out after ${REQUEST_TIMEOUT_MS}ms (${requestSummary})`);
+      throw new ClaudeServiceError('claude_timeout', 'Request timed out. Please try again.');
     }
+    console.error(`[claudeService] network error reaching Anthropic (${requestSummary}):`, err);
     throw new ClaudeServiceError('claude_error', 'Could not reach the AI service. Please try again.');
   } finally {
     clearTimeout(timeout);
@@ -175,7 +180,27 @@ async function generateContent({ history, message, image, isFirstTurn, context }
 
   if (!response.ok) {
     const body = await response.text().catch(() => '');
-    console.error('Claude API error:', response.status, body);
+    console.error(`[claudeService] <- ${response.status} (${requestSummary}):`, body);
+    // Map Anthropic's actual HTTP status to a distinct code/message instead
+    // of a single generic "the AI service returned an error" for everything
+    // — 401 (bad key), 429 (rate/quota — this includes the "credit balance
+    // too low" billing case Anthropic returns as a 400), and 5xx each mean
+    // something different and need a different fix.
+    if (response.status === 401) {
+      throw new ClaudeServiceError('claude_auth_error', 'Authentication with the AI service failed.');
+    }
+    if (response.status === 403) {
+      throw new ClaudeServiceError('claude_forbidden', 'Access to the AI service was denied.');
+    }
+    if (response.status === 429) {
+      throw new ClaudeServiceError('claude_rate_limited', 'AI service is busy right now. Please try again shortly.');
+    }
+    if (response.status === 400 && /credit balance/i.test(body)) {
+      throw new ClaudeServiceError('claude_billing_error', 'AI service is temporarily unavailable. Please try again later.');
+    }
+    if (response.status >= 500) {
+      throw new ClaudeServiceError('claude_server_error', 'The AI service is having issues. Please try again.');
+    }
     throw new ClaudeServiceError('claude_error', 'The AI service returned an error. Please try again.');
   }
 
@@ -187,8 +212,11 @@ async function generateContent({ history, message, image, isFirstTurn, context }
     .trim();
 
   if (!rawText) {
-    throw new ClaudeServiceError('claude_error', 'The AI did not return any content. Please try again.');
+    console.error(`[claudeService] empty content in Claude response (${requestSummary}):`, JSON.stringify(data));
+    throw new ClaudeServiceError('claude_parse_error', 'Unable to process the AI response. Please try again.');
   }
+
+  console.log(`[claudeService] <- 200 OK (${requestSummary}), ${rawText.length} chars`);
 
   return isFirstTurn ? extractTitle(rawText) : { title: null, content: rawText };
 }

@@ -747,12 +747,17 @@ class _CommunityScreenState extends State<CommunityScreen> {
     savePostsToLocal();
   }
 
-  // Native share action
-  void _sharePost(Map<String, dynamic> post) {
-    Share.share(
+  // Native share action — only counts as a share once the platform confirms
+  // the user actually completed it (ShareResultStatus.success), not just for
+  // opening the sheet. `.dismissed` (user canceled) and `.unavailable` (the
+  // platform/OS version can't report completion) both correctly leave the
+  // count unchanged rather than risk a false increment.
+  Future<void> _sharePost(Map<String, dynamic> post) async {
+    final result = await Share.share(
       'Check out this update by ${post['name']} in Tamil Business Tribe:\n\n"${post['content']}"',
       subject: 'Post by ${post['name']}',
     );
+    if (!mounted || result.status != ShareResultStatus.success) return;
     setState(() {
       post['shares'] = (post['shares'] as int) + 1;
     });
@@ -1656,13 +1661,16 @@ class _CommunityScreenState extends State<CommunityScreen> {
       );
     }
 
-    // Case 2: Single full-width image
+    // Case 2: Single full-width image — sized to the image's own aspect
+    // ratio (not a fixed 16:9 crop) so portrait/landscape/square uploads
+    // all display uncropped at full width, per spec.
     if (images.length == 1) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(12.0),
-        child: AspectRatio(
-          aspectRatio: 16 / 9,
-          child: _buildSingleImageWidget(images[0] as String),
+        child: _buildSingleImageWidget(
+          images[0] as String,
+          fit: BoxFit.fitWidth,
+          width: double.infinity,
         ),
       );
     }
@@ -1687,11 +1695,12 @@ class _CommunityScreenState extends State<CommunityScreen> {
     );
   }
 
-  Widget _buildSingleImageWidget(String path) {
+  Widget _buildSingleImageWidget(String path, {BoxFit fit = BoxFit.cover, double? width}) {
     if (path.startsWith('http') || path.startsWith('https')) {
       return Image.network(
         path,
-        fit: BoxFit.cover,
+        width: width,
+        fit: fit,
         errorBuilder: (context, error, stackTrace) => Container(
           color: const Color(0xFF1A1A1A),
           child: const Icon(Icons.image_not_supported_rounded,
@@ -1701,7 +1710,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
     } else if (path.startsWith('assets/')) {
       return Image.asset(
         path,
-        fit: BoxFit.cover,
+        width: width,
+        fit: fit,
         errorBuilder: (context, error, stackTrace) => Container(
           color: const Color(0xFF1A1A1A),
           child: const Icon(Icons.image_not_supported_rounded,
@@ -1711,7 +1721,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
     } else {
       return Image.file(
         File(path),
-        fit: BoxFit.cover,
+        width: width,
+        fit: fit,
         errorBuilder: (context, error, stackTrace) => Container(
           color: const Color(0xFF1A1A1A),
           child: const Icon(Icons.image_not_supported_rounded,

@@ -17,14 +17,34 @@ const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
+// Client-input validation codes — expected, routine, and already
+// self-explanatory from the request; not worth logging as errors.
+const VALIDATION_CODES = new Set(['empty_input', 'invalid_image_type', 'image_too_large']);
+
 function sendError(res, err, extra) {
   const knownCodes = new Set([
     'empty_input', 'invalid_image_type', 'image_too_large', 'daily_limit_reached',
-    'rate_limited', 'claude_timeout', 'claude_error', 'not_found', 'forbidden', 'server_error',
+    'rate_limited', 'claude_timeout', 'claude_error', 'claude_not_configured', 'claude_auth_error',
+    'claude_forbidden', 'claude_rate_limited', 'claude_billing_error', 'claude_server_error',
+    'claude_parse_error', 'not_found', 'forbidden', 'server_error',
   ]);
   const code = knownCodes.has(err.code) ? err.code : 'server_error';
-  const status = { not_found: 404, forbidden: 403, empty_input: 400, invalid_image_type: 400, image_too_large: 400, daily_limit_reached: 429, rate_limited: 429, claude_timeout: 504 }[code] || 500;
-  if (code === 'server_error') console.error('AI route error:', err);
+  const status = {
+    not_found: 404, forbidden: 403, empty_input: 400, invalid_image_type: 400, image_too_large: 400,
+    daily_limit_reached: 429, rate_limited: 429, claude_timeout: 504, claude_rate_limited: 429,
+    claude_billing_error: 503, claude_not_configured: 500, claude_auth_error: 502, claude_forbidden: 502,
+    claude_server_error: 502, claude_parse_error: 502,
+  }[code] || 500;
+  // Log everything except routine client-input validation — a silently
+  // swallowed claude_error/claude_timeout/etc. is exactly what made this
+  // whole class of bug hard to diagnose from outside the server process.
+  if (!VALIDATION_CODES.has(code)) {
+    // Full stack trace for genuinely unexpected errors (code got coerced to
+    // server_error because it wasn't one of our typed service errors) —
+    // typed errors from claudeService/etc. already log their own detail
+    // (request summary, upstream status/body) at the point they're thrown.
+    console.error(`[AI route error] code=${code} status=${status}:`, err.message || err, code === 'server_error' ? err.stack : '');
+  }
   res.status(status).json({ success: false, code, message: err.message || 'Something went wrong. Please try again.', ...extra });
 }
 

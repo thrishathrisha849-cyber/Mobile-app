@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' show MediaType;
 
@@ -59,20 +60,38 @@ class AIContentService {
   }
 
   List<String> _candidateHosts() {
-    final hosts = <String>['192.168.0.115']; // LAN IP first, physical device testing
+    // NOTE: these LAN IPs are the dev machine's current DHCP-assigned
+    // address and WILL go stale whenever that machine reconnects to Wi-Fi —
+    // this exact staleness (192.168.0.115, no longer valid) was the root
+    // cause of every physical-device request failing with a misleading
+    // "check your internet" message. Update the first entry to
+    // `ipconfig`/`ifconfig`'s current IPv4 address if requests start
+    // failing again after the dev machine's network changes.
+    final hosts = <String>['192.168.0.117', '192.168.0.115', '192.168.0.123'];
     if (kIsWeb) {
       hosts.addAll(['localhost', '127.0.0.1']);
     } else if (Platform.isAndroid) {
-      hosts.add('10.0.2.2');
+      hosts.add('10.0.2.2'); // Android emulator's loopback to the host machine
     } else if (Platform.isIOS) {
       hosts.addAll(['localhost', '127.0.0.1']);
     }
-    hosts.add('192.168.0.123');
     return hosts;
   }
 
   Future<String> _resolveBaseUrl() async {
     if (_cachedBaseUrl != null) return _cachedBaseUrl!;
+
+    // Distinguish "this device has no network at all" from "the device is
+    // online but our backend specifically isn't reachable" — these need
+    // different, honest messages (FR-035); previously both cases showed the
+    // same "check your internet" copy even when Wi-Fi/mobile data was on.
+    final connectivity = await Connectivity().checkConnectivity();
+    final hasNetwork = connectivity.any((r) =>
+        r == ConnectivityResult.mobile || r == ConnectivityResult.wifi || r == ConnectivityResult.ethernet);
+    if (!hasNetwork) {
+      throw AIContentServiceException(
+          'no_internet', 'No internet connection. Please check your network and try again.');
+    }
 
     for (final host in _candidateHosts()) {
       try {
@@ -88,17 +107,20 @@ class AIContentService {
       }
     }
     throw AIContentServiceException('backend_unavailable',
-        "Sorry, unga request process panna mudiyala. Internet connection check panni marubadiyum try pannunga.");
+        'Could not reach the Content Buddy AI server. Please try again in a moment.');
   }
 
   Map<String, dynamic> _decodeOrThrow(http.Response response) {
+    final endpoint = response.request?.url.toString() ?? '(unknown endpoint)';
     Map<String, dynamic> body;
     try {
       body = jsonDecode(response.body) as Map<String, dynamic>;
-    } catch (_) {
-      throw AIContentServiceException('server_error', 'Something went wrong. Please try again.');
+    } catch (e) {
+      debugPrint('[AIContentService] $endpoint -> ${response.statusCode}: unparseable response body: ${response.body}');
+      throw AIContentServiceException('server_error', 'Unable to process the AI response. Please try again.');
     }
     if (body['success'] != true) {
+      debugPrint('[AIContentService] $endpoint -> ${response.statusCode}: code=${body['code']} message=${body['message']}');
       throw AIContentServiceException(
         (body['code'] as String?) ?? 'server_error',
         (body['message'] as String?) ?? 'Something went wrong. Please try again.',
@@ -109,6 +131,7 @@ class AIContentService {
         conversationId: body['conversationId'] as String?,
       );
     }
+    debugPrint('[AIContentService] $endpoint -> ${response.statusCode}: success');
     return body;
   }
 
@@ -116,14 +139,26 @@ class AIContentService {
     final baseUrl = await _resolveBaseUrl();
     try {
       return await action(baseUrl).timeout(_requestTimeout);
-    } on AIContentServiceException {
+    } on AIContentServiceException catch (e) {
+      debugPrint('[AIContentService] request failed: code=${e.code} message=${e.message}');
       rethrow;
-    } on TimeoutException {
-      throw AIContentServiceException('claude_timeout', 'The AI took too long to respond. Please try again.');
-    } on SocketException {
+    } on TimeoutException catch (e, st) {
+      debugPrint('[AIContentService] timeout against $baseUrl: $e\n$st');
+      throw AIContentServiceException('claude_timeout', 'Request timed out. Please try again.');
+    } on SocketException catch (e, st) {
+      debugPrint('[AIContentService] socket error against $baseUrl: $e\n$st');
       _cachedBaseUrl = null; // host may have changed networks; re-probe next call
-      throw AIContentServiceException('backend_unavailable',
-          "Sorry, unga request process panna mudiyala. Internet connection check panni marubadiyum try pannunga.");
+      final connectivity = await Connectivity().checkConnectivity();
+      final hasNetwork = connectivity.any((r) =>
+          r == ConnectivityResult.mobile || r == ConnectivityResult.wifi || r == ConnectivityResult.ethernet);
+      throw hasNetwork
+          ? AIContentServiceException(
+              'backend_unavailable', 'Lost connection to the Content Buddy AI server. Please try again.')
+          : AIContentServiceException(
+              'no_internet', 'No internet connection. Please check your network and try again.');
+    } catch (e, st) {
+      debugPrint('[AIContentService] unexpected error against $baseUrl: $e\n$st');
+      throw AIContentServiceException('unexpected_error', 'Something went wrong. Please try again.');
     }
   }
 
@@ -171,6 +206,9 @@ class AIContentService {
           contentType: _mediaTypeForPath(image.path),
         ));
       }
+
+      debugPrint('[AIContentService] POST $uri payload=${jsonEncode(payload)} '
+          'hasImage=${image != null}');
 
       final client = http.Client();
       cancelToken?._client = client;
