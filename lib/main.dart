@@ -22,6 +22,7 @@ import 'podcast.dart';
 import 'ebooks.dart';
 import 'courses.dart';
 import 'ai_content_screen.dart';
+import 'assessment_login_screen.dart';
 import 'task.dart';
 import 'firebase_notification_service.dart';
 import 'firebase_options.dart';
@@ -699,8 +700,8 @@ class _TbtAppDrawerState extends State<TbtAppDrawer>
   late Animation<double> _headerFade;
   late Animation<Offset> _headerSlide;
 
-  // 9 nav items + 1 logout = 10 staggered controllers
-  final int _itemCount = 11;
+  // 10 nav items + 1 logout = 11 staggered controllers
+  final int _itemCount = 12;
   late List<AnimationController> _itemCtrls;
   late List<Animation<double>> _itemFades;
   late List<Animation<Offset>> _itemSlides;
@@ -1071,13 +1072,26 @@ class _TbtAppDrawerState extends State<TbtAppDrawer>
                           );
                         },
                       )),
+                      animItem(10, _TbtDrawerItem(
+                        icon: Icons.psychology_alt_rounded,
+                        label: 'Business Assessment',
+                        onTap: () {
+                          Navigator.pop(context);
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (context) =>
+                                    const AssessmentLoginScreen()),
+                          );
+                        },
+                      )),
                     ],
                   ),
                 ),
 
                 // ── Animated Footer – Logout ──────────────────────
                 animItem(
-                  10,
+                  11,
                   Container(
                     margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                     padding: const EdgeInsets.only(top: 8),
