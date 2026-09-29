@@ -1,0 +1,1416 @@
+================================================================================
+  TBT MOBILE APP - FIREBASE CLOUD MESSAGING (FCM) PUSH NOTIFICATION SETUP
+================================================================================
+
+Audience : A developer who has the TBT mobile app code in a different
+           folder/repository and needs to reproduce the working FCM setup.
+Status   : Implemented and tested end to end in the reference TBT repository.
+Contents : No secrets. Everything that is a credential is shown as a
+           <PLACEHOLDER>. Never replace a placeholder with a real value
+           inside this document or inside any file that is committed to Git.
+
+Table of contents
+   1. Project overview
+   2. Firebase project
+   3. Flutter packages
+   4. Firebase and Android setup
+   5. Flutter notification service
+   6. main.dart integration
+   7. Notification screen / tap routing
+   8. Notification type enum
+   9. Backend / Firebase Admin SDK
+  10. Admin push flow
+  11. Git Bash test
+  12. Test results from the working implementation
+  13. Expected behavior
+  14. Troubleshooting
+  15. Security
+  16. Implementation checklist
+  17. Final verification
+  18. Important note for another developer
+
+
+================================================================================
+1. PROJECT OVERVIEW
+================================================================================
+
+This is the Firebase Cloud Messaging (FCM) push notification setup for the TBT
+(Tamil Business Tribe) Flutter app on Android.
+
+It has two parts:
+
+  a) Flutter app (mobile client)
+     - Initializes Firebase and FCM at startup.
+     - Asks for notification permission (Android 13+ runtime prompt).
+     - Subscribes every install to the FCM topic "all_users".
+     - Shows pushes in all app states (foreground, background, terminated).
+     - When a notification is tapped, it opens the in-app Notifications
+       screen, which routes to the referenced content (post, podcast, e-book,
+       support, ...).
+
+  b) Backend (Node/Express "admin-app")
+     - Uses the Firebase Admin SDK with a service-account key.
+     - When an admin sends a notification, the backend first saves it as a
+       row in the Supabase table "mobile_notifications". It then pushes that
+       row to the "all_users" FCM topic.
+
+Key design decisions (keep these unless you have a strong reason not to):
+
+  - TOPIC-BASED, NOT PER-DEVICE. The app has no per-user authentication, so
+    every notification is a global broadcast. The backend never stores or
+    uses device tokens. It sends to the topic "all_users", which every
+    install subscribes to on startup. The FCM token is fetched only for
+    diagnostics (debug log).
+  - The in-app Notifications list (Supabase table mobile_notifications) is
+    the source of truth. The push is a delivery mechanism on top of it.
+  - Personal notification types (support_ticket, support_feedback) are
+    saved in-app only and are NEVER pushed. A topic push would put one
+    user's private message on every device's lock screen.
+  - A push failure never fails the admin action. The in-app notification is
+    already saved, and the API response reports the push status separately.
+  - Android only. There is no iOS Firebase config or APNs setup yet. The
+    code has iOS-safe branches, but iOS delivery has not been set up or
+    tested.
+
+
+================================================================================
+2. FIREBASE PROJECT
+================================================================================
+
+  Firebase project ID : mobile-app-d8c0f
+  Android package name: com.tbt.tbtmobileapp
+                        (= applicationId AND namespace in
+                         android/app/build.gradle)
+  App name            : TBT  (android:label in AndroidManifest.xml)
+  Service used        : Firebase Cloud Messaging (FCM), HTTP v1 API via the
+                        Firebase Admin SDK. The legacy "server key" API is
+                        NOT used.
+
+The Android app registered in the Firebase Console must have exactly the
+package name com.tbt.tbtmobileapp. If your repository uses a different
+applicationId, do one of the following:
+  - change it to com.tbt.tbtmobileapp, OR
+  - register your package name as a new Android app in the same Firebase
+    project, then download that app's google-services.json.
+A mismatch means the build fails at the google-services step, or the app
+never receives pushes.
+
+
+================================================================================
+3. FLUTTER PACKAGES
+================================================================================
+
+pubspec.yaml (dependencies) - exact versions resolved in the working build:
+
+  firebase_core: ^3.15.2                  (resolved 3.15.2)
+  firebase_messaging: ^15.2.10            (resolved 15.2.10)
+  flutter_local_notifications: ^17.2.4    (resolved 17.2.4)
+  shared_preferences: ^2.3.2              (already used by the app; not
+                                           needed for FCM itself)
+
+Dart SDK constraint in the working app: '>=3.4.4 <4.0.0'.
+Flutter version used: 3.29 (Android template: AGP 8.7.0 / Gradle 8.10.2).
+
+Notes:
+  - flutter_local_notifications is kept on 17.x on purpose. v19+ requires
+    core library desugaring with desugar_jdk_libs 2.1.4 or newer. If you
+    upgrade it, bump desugar_jdk_libs as well (see section 4.3).
+  - After editing pubspec.yaml, run:  flutter pub get
+
+
+================================================================================
+4. FIREBASE AND ANDROID SETUP
+================================================================================
+
+4.1 Generate Firebase config for Flutter
+----------------------------------------
+Use the FlutterFire CLI (do not hand-write these files):
+
+  dart pub global activate flutterfire_cli
+  firebase login
+  flutterfire configure --project=mobile-app-d8c0f --platforms=android
+
+This generates:
+  - lib/firebase_options.dart  (DefaultFirebaseOptions.currentPlatform)
+  - android/app/google-services.json
+
+If platform config changes later, run flutterfire configure again. Do not
+hand-edit firebase_options.dart.
+
+4.2 google-services.json placement
+----------------------------------
+  Location: android/app/google-services.json
+  (NOT android/google-services.json and NOT the project root.)
+
+Check it contains:
+  "project_id": "mobile-app-d8c0f"
+  "package_name": "com.tbt.tbtmobileapp"
+
+google-services.json and firebase_options.dart hold the CLIENT config
+(project ID, app ID and a restricted client API key). This is not the
+Admin service-account key. The reference repository commits both files. If
+your team's policy is to keep them out of Git, gitignore them and share them
+separately. Either way, NEVER confuse them with firebase-service-account.json
+(section 9), which must never be committed.
+
+4.3 Android Gradle configuration
+--------------------------------
+android/build.gradle (project level):
+
+  buildscript {
+      repositories { google(); mavenCentral() }
+      dependencies {
+          classpath 'com.google.gms:google-services:4.4.2'
+      }
+  }
+
+android/settings.gradle plugin versions in the working build:
+
+  id "com.android.application" version "8.7.0" apply false
+  id "org.jetbrains.kotlin.android" version "1.8.22" apply false
+
+android/gradle/wrapper/gradle-wrapper.properties:
+
+  distributionUrl=https\://services.gradle.org/distributions/gradle-8.10.2-all.zip
+
+android/app/build.gradle (app level) - the relevant parts:
+
+  plugins {
+      id "com.android.application"
+      id "kotlin-android"
+      id "dev.flutter.flutter-gradle-plugin"
+      id "com.google.gms.google-services"      // <-- applies google-services.json
+  }
+
+  android {
+      namespace = "com.tbt.tbtmobileapp"
+      compileSdk = flutter.compileSdkVersion
+
+      compileOptions {
+          // Required by flutter_local_notifications
+          coreLibraryDesugaringEnabled true
+          sourceCompatibility = JavaVersion.VERSION_11
+          targetCompatibility = JavaVersion.VERSION_11
+      }
+      // AGP 8 fails if Java and Kotlin target different JVM versions.
+      kotlinOptions {
+          jvmTarget = JavaVersion.VERSION_11.toString()
+      }
+
+      defaultConfig {
+          applicationId = "com.tbt.tbtmobileapp"
+          minSdk = 21
+          targetSdk = flutter.targetSdkVersion
+          ...
+      }
+  }
+
+  dependencies {
+      coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:1.2.2'
+      // (use 2.1.4+ if you move to flutter_local_notifications v19+)
+  }
+
+4.4 AndroidManifest.xml (android/app/src/main/AndroidManifest.xml)
+------------------------------------------------------------------
+Permissions (inside <manifest>, before <application>):
+
+  <uses-permission android:name="android.permission.INTERNET" />
+  <!-- Required for push notifications on Android 13+ -->
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+  <uses-permission android:name="android.permission.VIBRATE" />
+
+<application android:label="TBT" ...>
+
+MainActivity - keep launchMode singleTop. Also add this intent filter next to
+the MAIN/LAUNCHER one:
+
+  <activity android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop" ...>
+      ...
+      <intent-filter>
+          <action android:name="FLUTTER_NOTIFICATION_CLICK" />
+          <category android:name="android.intent.category.DEFAULT" />
+      </intent-filter>
+  </activity>
+
+FCM defaults (inside <application>):
+
+  <meta-data
+      android:name="com.google.firebase.messaging.default_notification_channel_id"
+      android:value="tbt_notifications" />
+  <meta-data
+      android:name="com.google.firebase.messaging.default_notification_icon"
+      android:resource="@drawable/ic_stat_notification" />
+  <meta-data
+      android:name="com.google.firebase.messaging.default_notification_color"
+      android:resource="@color/notification_color" />
+
+IMPORTANT: do NOT declare a <service> for
+com.google.firebase.messaging.FirebaseMessagingService in the app manifest.
+The firebase_messaging plugin already registers its own
+FlutterFirebaseMessagingService for MESSAGING_EVENT. Declaring the base class
+yourself shadows it: token refreshes and messages then never reach Dart.
+
+4.5 Notification icon and color
+-------------------------------
+android/app/src/main/res/drawable/ic_stat_notification.xml
+  - A vector drawable in white (#FFFFFFFF) on a transparent background.
+    The working app uses a 24dp bell shape.
+  - Android renders small notification icons from the alpha channel only. A
+    full-color launcher icon shows as a white square, so do not reuse
+    ic_launcher here.
+
+android/app/src/main/res/values/colors.xml
+
+  <?xml version="1.0" encoding="utf-8"?>
+  <resources>
+      <!-- TBT brand red for FCM notification accent color -->
+      <color name="notification_color">#D30814</color>
+  </resources>
+
+4.6 Notification channel
+------------------------
+  Channel ID  : tbt_notifications
+  Name        : TBT Notifications
+  Description : Updates from Tamil Business Tribe
+  Importance  : high  (heads-up notification)
+
+The channel is created in Dart at startup (section 5). The same ID appears in
+three places, and all three must match:
+  - AndroidManifest.xml  default_notification_channel_id
+  - Dart AndroidNotificationChannel('tbt_notifications', ...)
+  - Backend push payload android.notification.channelId
+
+4.7 Android 13+ POST_NOTIFICATIONS
+----------------------------------
+On Android 13 (API 33) and newer, notifications are blocked until the user
+grants the runtime permission. Two things are required:
+  1. The <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+     line in the manifest (4.4).
+  2. A runtime request. FirebaseMessaging.instance.requestPermission(...)
+     shows the system prompt on Android 13+ (section 5).
+On Android 12 and below, notifications are allowed by default.
+
+
+================================================================================
+5. FLUTTER NOTIFICATION SERVICE
+================================================================================
+
+File in the reference repo: lib/firebase_notification_service.dart
+One static class, FirebaseNotificationService, owns ALL FCM logic. Nothing
+else in the app talks to FirebaseMessaging directly.
+
+5.1 Top-level background handler (REQUIRED to be top-level)
+-----------------------------------------------------------
+
+  @pragma('vm:entry-point')
+  Future<void> firebaseBackgroundMessageHandler(RemoteMessage message) async {
+    try {
+      await Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform);
+    } catch (_) {
+      // Already initialized in this isolate.
+    }
+    debugPrint('[FCM Background] id=${message.messageId} data=${message.data}');
+  }
+
+  - It runs in a separate isolate when the app is in the background or
+    terminated.
+  - It must NOT show a local notification. Backend pushes always contain a
+    "notification" block, which Android already displays in the tray in
+    those states. Showing one here would make every push appear twice.
+  - @pragma('vm:entry-point') keeps release-mode tree shaking from removing
+    it.
+
+5.2 Class constants and state
+-----------------------------
+
+  class FirebaseNotificationService {
+    static const String allUsersTopic = 'all_users';
+
+    static const AndroidNotificationChannel _channel = AndroidNotificationChannel(
+      'tbt_notifications',
+      'TBT Notifications',
+      description: 'Updates from Tamil Business Tribe',
+      importance: Importance.high,
+    );
+
+    static const String _smallIcon = 'ic_stat_notification';
+
+    // Passed to MaterialApp so a tap can navigate without a BuildContext.
+    static final GlobalKey<NavigatorState> navigatorKey =
+        GlobalKey<NavigatorState>();
+
+    static final FirebaseMessaging _messaging = FirebaseMessaging.instance;
+    static final FlutterLocalNotificationsPlugin _localNotifications =
+        FlutterLocalNotificationsPlugin();
+
+    static bool _initialized = false;
+    static String? fcmToken;                      // diagnostics only
+    static final ValueNotifier<RemoteMessage?> onMessageReceived =
+        ValueNotifier(null);
+    static final Set<String> _shownMessageIds = <String>{};  // de-dupe
+
+    // Tap waiting for the home screen to exist (cold start / splash).
+    static Map<String, dynamic>? _pendingTap;
+    static int _homeScreensMounted = 0;
+    ...
+  }
+
+5.3 initialize() - the order matters
+-------------------------------------
+Call it once from main(), after Firebase.initializeApp() succeeds. Every
+step is wrapped in its own try/catch (_guard), so one failure (for example,
+no network for the token) does not skip the rest. Slow steps (permission
+dialog, token, topic) run un-awaited, so they never delay startup.
+
+  static Future<void> initialize() async {
+    if (_initialized) return;
+    _initialized = true;
+
+    // 1. Background handler
+    FirebaseMessaging.onBackgroundMessage(firebaseBackgroundMessageHandler);
+
+    // 2. Local notifications plugin + Android channel
+    await _guard('local notifications setup', _initLocalNotifications);
+
+    // 3. Listeners
+    FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
+    FirebaseMessaging.onMessageOpenedApp
+        .listen((message) => _handleTap(message.data));   // background tap
+    _messaging.onTokenRefresh.listen(_onTokenRefresh);
+
+    // 4. iOS only: let the OS present foreground pushes
+    if (Platform.isIOS) {
+      await _guard('foreground presentation options', () =>
+          _messaging.setForegroundNotificationPresentationOptions(
+              alert: true, badge: true, sound: true));
+    }
+
+    // 5. Cold start: app launched by tapping a notification while terminated
+    await _guard('initial message', () async {
+      final initialMessage = await _messaging.getInitialMessage();
+      if (initialMessage != null) _handleTap(initialMessage.data);
+    });
+    // ...or by tapping a LOCAL notification (foreground push) after the app
+    // was killed
+    await _guard('local notification launch details', () async {
+      final details = await _localNotifications.getNotificationAppLaunchDetails();
+      if (details?.didNotificationLaunchApp ?? false) {
+        _handleTap(_decodePayload(details!.notificationResponse?.payload));
+      }
+    });
+
+    // 6. Permission, token, topic subscription (network/user dependent)
+    unawaited(_requestPermissionAndSubscribe());
+  }
+
+  static Future<void> _guard(String step, Future<void> Function() body) async {
+    try { await body(); } catch (e) { debugPrint('[FCM] $step failed: $e'); }
+  }
+
+5.4 Local notifications + channel
+---------------------------------
+
+  static Future<void> _initLocalNotifications() async {
+    const settings = InitializationSettings(
+      android: AndroidInitializationSettings(_smallIcon),
+      iOS: DarwinInitializationSettings(          // permission comes from FCM
+        requestAlertPermission: false,
+        requestBadgePermission: false,
+        requestSoundPermission: false,
+      ),
+    );
+    await _localNotifications.initialize(
+      settings,
+      onDidReceiveNotificationResponse: (response) =>
+          _handleTap(_decodePayload(response.payload)),   // foreground-push tap
+    );
+    await _localNotifications
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(_channel);
+  }
+
+5.5 Permission, token and all_users topic subscription
+------------------------------------------------------
+
+  static Future<void> _requestPermissionAndSubscribe() async {
+    await _guard('permission request', () async {
+      // Android 13+: shows the POST_NOTIFICATIONS runtime prompt
+      final settings = await _messaging.requestPermission(
+          alert: true, badge: true, sound: true);
+      debugPrint('[FCM] Permission status: ${settings.authorizationStatus}');
+    });
+    await _guard('token fetch', () async {
+      fcmToken = await _messaging.getToken();
+      _logToken('FCM token', fcmToken);
+    });
+    await _subscribeToAllUsers();
+  }
+
+  // Idempotent, so it runs on every start and after every token refresh.
+  // Retries with backoff (10s, 60s), e.g. for a first launch while offline.
+  static Future<void> _subscribeToAllUsers() async {
+    const retryDelays = [Duration(seconds: 10), Duration(seconds: 60)];
+    for (var attempt = 0;; attempt++) {
+      try {
+        await _messaging.subscribeToTopic(allUsersTopic);
+        debugPrint('[FCM] Subscribed to topic "$allUsersTopic"');
+        return;
+      } catch (e) {
+        debugPrint('[FCM] Subscribe to "$allUsersTopic" failed '
+            '(attempt ${attempt + 1}): $e');
+        if (attempt >= retryDelays.length) return;
+        await Future.delayed(retryDelays[attempt]);
+      }
+    }
+  }
+
+  static void _onTokenRefresh(String newToken) {
+    fcmToken = newToken;
+    _logToken('FCM token refreshed', newToken);
+    unawaited(_subscribeToAllUsers());
+  }
+
+  _logToken prints the full token only in debug builds (kDebugMode), for
+  sending a single-device test from the Firebase Console. Release builds log
+  only a 12-character prefix. The token is never sent to any server.
+
+5.6 Foreground message handling
+-------------------------------
+Android never shows FCM notifications while the app is in the foreground, so
+the app shows the notification itself:
+
+  static void _handleForegroundMessage(RemoteMessage message) {
+    onMessageReceived.value = message;
+    NotificationBadge.instance.refresh();        // refresh in-app bell count
+
+    if (!Platform.isAndroid) return;
+
+    final messageId = message.messageId;
+    if (messageId != null && !_shownMessageIds.add(messageId)) return; // de-dupe
+
+    final title = message.notification?.title ?? message.data['title'];
+    final body  = message.notification?.body  ?? message.data['body'];
+    if ((title == null || title.isEmpty) && (body == null || body.isEmpty)) return;
+
+    unawaited(_guard('show local notification', () {
+      return _localNotifications.show(
+        (messageId ?? DateTime.now().toIso8601String()).hashCode,
+        title,
+        body,
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            _channel.id, _channel.name,
+            channelDescription: _channel.description,
+            importance: Importance.high,
+            priority: Priority.high,
+            icon: _smallIcon,
+            color: const Color(0xFFD30814),      // = @color/notification_color
+            styleInformation: BigTextStyleInformation(body ?? ''),
+          ),
+        ),
+        payload: jsonEncode(message.data),       // carried to the tap handler
+      );
+    }));
+  }
+
+  static Map<String, dynamic> _decodePayload(String? payload) {
+    if (payload == null || payload.isEmpty) return {};
+    try { return Map<String, dynamic>.from(jsonDecode(payload) as Map); }
+    catch (_) { return {}; }
+  }
+
+  (NotificationBadge is the app's existing unread-count ChangeNotifier in
+  lib/notification_service.dart. Replace it with your repo's equivalent, or
+  drop the call if you don't have one.)
+
+5.7 Tap handling (all three entry points end here)
+--------------------------------------------------
+Entry points:
+  - onMessageOpenedApp          : system-tray tap while app is in background
+  - getInitialMessage()         : system-tray tap that launched a killed app
+  - local notification response / getNotificationAppLaunchDetails()
+                                : tap on a foreground-shown local notification
+
+  static void _handleTap(Map<String, dynamic> data) {
+    _pendingTap = {
+      'id': data['notification_id'],
+      'type': data['type'],
+      'referenceId': data['reference_id'],
+      'referenceType': data['reference_type'],
+    };
+    _openPendingTap();
+  }
+
+  // Called from the home screen's initState/dispose. A tap is only acted on
+  // once the user is past splash/login.
+  static void homeScreenMounted()   { _homeScreensMounted++; _openPendingTap(); }
+  static void homeScreenUnmounted() { if (_homeScreensMounted > 0) _homeScreensMounted--; }
+
+  static void _openPendingTap() {
+    final tap = _pendingTap;
+    if (tap == null || _homeScreensMounted == 0) return;
+    _pendingTap = null;
+    // Deferred: homeScreenMounted() runs inside initState, while the
+    // navigator is still mid-build and can't accept a push.
+    scheduleMicrotask(() {
+      final navigator = navigatorKey.currentState;
+      if (navigator == null) { _pendingTap = tap; return; }
+      navigator.push(MaterialPageRoute(
+        builder: (_) => NotificationsScreen(openNotification: tap),
+      ));
+    });
+  }
+
+Why the "pending tap" mechanism exists: on a cold start, main() handles
+getInitialMessage() before any screen exists. After that, the splash screen
+calls pushReplacement, which would destroy a screen pushed too early. Storing
+the tap and opening it only once the home screen has mounted makes cold-start
+taps reliable.
+
+Required imports for the service file:
+  dart:async, dart:convert, dart:io,
+  package:firebase_core/firebase_core.dart,
+  package:firebase_messaging/firebase_messaging.dart,
+  package:flutter/foundation.dart, package:flutter/material.dart,
+  package:flutter_local_notifications/flutter_local_notifications.dart,
+  firebase_options.dart, notification_service.dart (NotificationBadge),
+  the file that contains NotificationsScreen.
+
+
+================================================================================
+6. MAIN.DART INTEGRATION
+================================================================================
+
+Order inside main() (the reference app's exact order):
+
+  Future<void> main() async {
+    // 1. Flutter bindings - must be first
+    WidgetsFlutterBinding.ensureInitialized();
+
+    // 2. (app-specific: load saved theme, etc.)
+
+    // 3. Firebase core. Kept separate from push setup so a push failure
+    //    can't be mistaken for a Firebase config failure, and vice versa.
+    var firebaseReady = false;
+    try {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+      firebaseReady = true;
+    } catch (e) {
+      debugPrint('Firebase initialization failed: $e');
+    }
+
+    // 4. Push notifications - only if Firebase is up
+    if (firebaseReady) {
+      try {
+        await FirebaseNotificationService.initialize();
+      } catch (e) {
+        debugPrint('Push notification initialization failed: $e');
+      }
+    }
+
+    // 5. Supabase (the in-app Notifications list reads from it)
+    try {
+      await Supabase.initialize(url: '<SUPABASE_URL>', anonKey: '<SUPABASE_ANON_KEY>');
+    } catch (e) {
+      debugPrint('Supabase initialization failed: $e');
+    }
+
+    // 6. Run the app
+    runApp(const MyApp());
+  }
+
+Imports:
+  import 'package:firebase_core/firebase_core.dart';
+  import 'firebase_options.dart';
+  import 'firebase_notification_service.dart';
+
+In the MaterialApp:
+
+  MaterialApp(
+    navigatorKey: FirebaseNotificationService.navigatorKey,   // REQUIRED
+    ...
+  )
+
+In the home screen's State (the first screen after splash/login - in the
+reference app this is PostPopupScreen in main.dart):
+
+  @override
+  void initState() {
+    super.initState();
+    FirebaseNotificationService.homeScreenMounted();
+    ...
+  }
+
+  @override
+  void dispose() {
+    FirebaseNotificationService.homeScreenUnmounted();
+    ...
+    super.dispose();
+  }
+
+Do NOT call FirebaseMessaging.onBackgroundMessage anywhere else. initialize()
+already registers it, and it must be registered only once.
+
+
+================================================================================
+7. NOTIFICATION SCREEN / TAP ROUTING
+================================================================================
+
+Every tap opens NotificationsScreen (reference: lib/profile.dart) with the
+tap payload. That screen then reuses its existing per-type row-tap logic, so
+a pushed notification and an in-app list row are handled identically.
+
+  class NotificationsScreen extends StatefulWidget {
+    /// Push-tap payload: {id, type, referenceId, referenceType}
+    final Map<String, dynamic>? openNotification;
+    const NotificationsScreen({super.key, this.openNotification});
+    ...
+  }
+
+  // State:
+  @override
+  void initState() {
+    super.initState();
+    _loadNotifications().then((_) => _openPushNotification());
+  }
+
+  void _openPushNotification() {
+    final pushed = widget.openNotification;
+    if (!mounted || pushed == null || pushed['type'] == null) return;
+    final id = pushed['id']?.toString();
+    // Prefer the loaded row (so its read state updates in the list); fall
+    // back to the push payload if it isn't in the list.
+    final item = _notifications.firstWhere(
+      (n) => id != null && n['id']?.toString() == id,
+      orElse: () => Map<String, dynamic>.from(pushed),
+    );
+    _onNotificationTap(item);
+  }
+
+_onNotificationTap(item) first marks the notification as read (Supabase
+update + badge refresh). It then switches on
+NotificationType.fromDbValue(item['type']):
+
+  type (DB / FCM value)  Destination in the reference app
+  ---------------------  ---------------------------------------------------
+  community_post         Fetch post by reference_id -> CommunityScreen with
+                         that post highlighted
+  podcast_series         Fetch series -> PodcastSeriesDetailScreen(seriesId)
+  podcast_episode        Fetch episode -> start playback
+                         (PodcastPlayerController.loadAndPlay) + PodcastScreen
+  ebook_book             Fetch book -> BookDetailsScreen(book)
+  ebook_banner           EBooksLibraryScreen
+  support_faq            (validate FAQ if reference_id given) ->
+                         SupportCenterScreen
+  support_ticket         SupportCenterScreen   (in-app only; never pushed)
+  support_feedback       SupportCenterScreen   (in-app only; never pushed)
+  null / unknown         No navigation - the user just stays on the
+                         Notifications list
+
+If a referenced item is missing or deleted, a SnackBar shows "Content not
+found or removed." Any exception is caught, logged and shown the same way,
+so a bad payload never crashes the app.
+
+FCM data payload keys (all string values - FCM requires strings):
+  notification_id  -> mobile_notifications.id
+  type             -> mobile_notifications.type
+  reference_id     -> mobile_notifications.reference_id
+  reference_type   -> mobile_notifications.reference_type
+Keys whose value is null are omitted, so the app reads them as null.
+
+To add a NEW notification type:
+  1. Add the enum value (section 8).
+  2. Add it to the DB CHECK constraint.
+  3. Add a case in _onNotificationTap.
+Put routing in NotificationsScreen only, never in the FCM service.
+
+
+================================================================================
+8. NOTIFICATION TYPE ENUM
+================================================================================
+
+File in the reference repo: lib/notification_service.dart
+
+  enum NotificationType {
+    communityPost('community_post'),
+    podcastSeries('podcast_series'),
+    podcastEpisode('podcast_episode'),
+    ebookBook('ebook_book'),
+    ebookBanner('ebook_banner'),
+    supportFaq('support_faq'),
+    supportTicket('support_ticket'),
+    supportFeedback('support_feedback');
+
+    const NotificationType(this.dbValue);
+
+    /// Exact string stored in the database and sent as FCM `data.type`.
+    final String dbValue;
+
+    /// Exact-match lookup; returns null for anything that isn't one of the
+    /// database values (e.g. a Firebase Console test, or a typo).
+    static NotificationType? fromDbValue(String? value) {
+      for (final type in values) {
+        if (type.dbValue == value) return type;
+      }
+      return null;
+    }
+  }
+
+Mapping:
+  communityPost   -> community_post
+  podcastSeries   -> podcast_series
+  podcastEpisode  -> podcast_episode
+  ebookBook       -> ebook_book
+  ebookBanner     -> ebook_banner
+  supportFaq      -> support_faq
+  supportTicket   -> support_ticket
+  supportFeedback -> support_feedback
+
+Handling unknown types safely:
+  - fromDbValue returns null (never throws) for an unknown, empty or
+    missing type.
+  - The switch in _onNotificationTap has an explicit "case null:" that does
+    nothing. The user stays on the Notifications list, and there is no crash
+    and no error message.
+  - _openPushNotification returns early when type is null, so a push with no
+    type (for example the Git Bash test in section 11, or a Firebase Console
+    test) just opens the Notifications list.
+  - Never use NotificationType.values.byName() or firstWhere without orElse.
+    Both throw on unknown input.
+
+The database must allow exactly the same strings. In the Supabase table
+mobile_notifications:
+
+  type VARCHAR(50) NOT NULL DEFAULT 'community_post'
+    CONSTRAINT mobile_notifications_type_check
+    CHECK (type IN ('community_post', 'podcast_series', 'podcast_episode',
+                    'ebook_book', 'ebook_banner', 'support_faq',
+                    'support_ticket', 'support_feedback')),
+
+The reference repo also has a Dart test (test/notification_type_test.dart)
+that checks the enum and the SQL list stay in sync. Adding an equivalent is
+recommended.
+
+Full table (for reference):
+
+  CREATE TABLE IF NOT EXISTS mobile_notifications (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    type VARCHAR(50) NOT NULL DEFAULT 'community_post' CONSTRAINT ... (above),
+    reference_id UUID,
+    reference_type VARCHAR(50),
+    is_read BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  );
+
+
+================================================================================
+9. BACKEND / FIREBASE ADMIN SDK
+================================================================================
+
+Backend: Node/Express admin-app (separate from the Flutter build).
+Package: firebase-admin ^14.5.0 (in admin-app/package.json)
+         Install with: cd admin-app && npm install firebase-admin
+
+9.1 Get the service-account key
+-------------------------------
+Firebase Console -> Project settings (project mobile-app-d8c0f) ->
+Service accounts -> "Generate new private key".
+Save the downloaded file as:
+
+  admin-app/firebase-service-account.json
+
+This file grants full admin access to the Firebase project. Treat it like a
+password (see section 15).
+
+9.2 Configure it (admin-app/.env - never committed)
+---------------------------------------------------
+Option A - file path (used in the reference setup):
+
+  FIREBASE_SERVICE_ACCOUNT_PATH=./firebase-service-account.json
+
+  A relative path is resolved against admin-app/. An absolute path also
+  works.
+
+Option B - inline JSON (for hosts where writing a file is awkward, e.g. some
+PaaS dashboards):
+
+  FIREBASE_SERVICE_ACCOUNT_JSON=<THE_WHOLE_SERVICE_ACCOUNT_JSON_ON_ONE_LINE>
+
+If both are set, FIREBASE_SERVICE_ACCOUNT_JSON wins. If neither is set,
+pushes are skipped with a warning, and in-app notifications still work.
+
+Other .env keys the admin-app already uses (placeholders only):
+  SUPABASE_URL=<YOUR_SUPABASE_URL>
+  SUPABASE_KEY=<YOUR_SUPABASE_SERVICE_ROLE_KEY>
+  PORT=5000
+
+Put the same keys, with placeholder values, in admin-app/.env.example
+(committed) so other developers know what to set.
+
+9.3 The push service (single source of push logic)
+--------------------------------------------------
+File: admin-app/services/pushService.js
+Exports: sendNotificationPush(notificationRow), ALL_USERS_TOPIC
+
+Constants (must match the app):
+  ALL_USERS_TOPIC    = 'all_users'
+  ANDROID_CHANNEL_ID = 'tbt_notifications'
+  ANDROID_ICON       = 'ic_stat_notification'
+  ANDROID_COLOR      = '#D30814'
+  PERSONAL_TYPES     = support_ticket, support_feedback  (never pushed)
+
+Behavior:
+  - Lazy, one-time initialization: it loads the service account from
+    FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_SERVICE_ACCOUNT_PATH, then
+    calls:
+        const app = initializeApp({ credential: cert(serviceAccount) }, 'tbt-push');
+        messaging = getMessaging(app);
+    It logs: [push] Firebase Admin initialized for project "mobile-app-d8c0f"
+  - If the JSON fails to parse, the error message deliberately does NOT
+    include the parser's message, because that could quote part of the
+    private key.
+  - The message it sends:
+
+      await messaging.send({
+        topic: 'all_users',
+        notification: { title: row.title, body: row.message },
+        data: {                       // strings only; null keys omitted
+          notification_id, type, reference_id, reference_type
+        },
+        android: {
+          priority: 'high',
+          notification: {
+            channelId: 'tbt_notifications',
+            icon: 'ic_stat_notification',
+            color: '#D30814',
+          },
+        },
+        apns: { payload: { aps: { sound: 'default' } } },
+      });
+
+  - It NEVER throws. It returns one of:
+        { sent: true,  messageId: 'projects/mobile-app-d8c0f/messages/<id>' }
+        { sent: false, reason: 'push not configured' | '"<type>" notifications
+                                are in-app only' | '<firebase error code>' }
+
+The top of pushService.js looks like this:
+
+  const fs = require('fs');
+  const path = require('path');
+  const { initializeApp, cert } = require('firebase-admin/app');
+  const { getMessaging } = require('firebase-admin/messaging');
+
+The service lives in admin-app/services/, so a relative
+FIREBASE_SERVICE_ACCOUNT_PATH is resolved with
+path.resolve(__dirname, '..', filePath), i.e. relative to admin-app/.
+
+9.4 Automated tests
+-------------------
+admin-app/test/pushService.test.js (run with: cd admin-app && npm test,
+which is "node --test"). The tests delete the FIREBASE_* env vars before
+loading the service, so they can never send a real push. They check the
+topic name and that personal types are never pushed.
+
+
+================================================================================
+10. ADMIN PUSH FLOW
+================================================================================
+
+  Admin clicks "Send notification" in the admin panel
+      -> POST /api/admin/<area>/<id>/send-notification
+  Backend validates the item (e.g. a community post must be approved)
+      -> INSERT a row into Supabase mobile_notifications
+         (title, message, type, reference_id, reference_type)
+  Backend calls sendNotificationPush(insertedRow)
+      -> Firebase Admin SDK messaging.send({ topic: 'all_users', ... })
+  FCM accepts the message and returns a message ID
+      -> FCM fans it out to every device subscribed to "all_users"
+  Android devices receive the notification
+      (tray when background/closed; local notification when foreground)
+  User taps it -> NotificationsScreen -> per-type route (section 7)
+  The in-app Notifications list also shows the row (source of truth)
+
+Send-notification routes in the reference server.js:
+  POST /api/admin/community/posts/:id/send-notification   type community_post
+  POST /api/admin/podcast/series/:id/send-notification    type podcast_series
+  POST /api/admin/podcast/episodes/:id/send-notification  type podcast_episode
+  POST /api/admin/ebooks/books/:id/send-notification      type ebook_book
+  POST /api/admin/ebooks/banner/:id/send-notification     type ebook_banner
+  POST /api/admin/support/faqs/:id/send-notification      type support_faq
+  POST /api/admin/support/tickets/:id/send-notification   type support_ticket   (in-app only)
+  POST /api/admin/support/feedback/:id/send-notification  type support_feedback (in-app only)
+
+Each route follows the same pattern:
+
+  const { data, error } = await supabase
+    .from('mobile_notifications')
+    .insert([{ title, message, type: '<type>', reference_id: item.id,
+               reference_type: '<ref_type>' }])
+    .select();
+  if (error) throw error;
+  const push = await sendNotificationPush(data[0]);
+  res.status(201).json({ success: true, notification: data[0], push });
+
+The "push" field in the response shows the push result without failing the
+request.
+
+
+================================================================================
+11. GIT BASH TEST
+================================================================================
+
+Purpose: send one real test push to the "all_users" topic from a terminal,
+through the SAME Firebase Admin setup the backend uses.
+
+Rules:
+  - Reuse services/pushService.js (sendNotificationPush). Do NOT write a
+    second initializeApp / messaging.send implementation.
+  - Do NOT insert a mobile_notifications row. The test push does not appear
+    in the in-app list.
+  - Do NOT print or log the service-account JSON.
+
+11.1 The script: admin-app/scripts/send-test-push.js
+----------------------------------------------------
+
+  // Sends a one-off test FCM push to every installed app (the `all_users`
+  // topic), to check the push pipeline end to end from a terminal.
+  //
+  // Usage, from admin-app/:
+  //   node scripts/send-test-push.js                   default title/body
+  //   node scripts/send-test-push.js "Title" "Body"    custom title/body
+  //
+  // Reuses services/pushService.js (same credentials from .env, same topic,
+  // channel and payload shape as real notifications). It does NOT create a
+  // mobile_notifications row, so nothing appears in the in-app Notifications
+  // list; tapping the push just opens that list.
+
+  require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+  const { sendNotificationPush, ALL_USERS_TOPIC } = require('../services/pushService');
+
+  const title = process.argv[2] || 'TBT Test Notification';
+  const body = process.argv[3] || 'Hello! This is a test push notification from Git Bash.';
+
+  (async () => {
+    console.log(`Sending test push to FCM topic "${ALL_USERS_TOPIC}"...`);
+    console.log(`  Title: ${title}`);
+    console.log(`  Body:  ${body}`);
+
+    // No `type`, so the app treats a tap as "open the Notifications list".
+    const result = await sendNotificationPush({
+      id: `test-${Date.now()}`,
+      title,
+      message: body,
+    });
+
+    if (result.sent) {
+      console.log(`\nSUCCESS: Firebase Cloud Messaging accepted the push.`);
+      console.log(`  FCM message id: ${result.messageId}`);
+      process.exit(0);
+    }
+    console.error(`\nFAILED: push was not sent (${result.reason}).`);
+    console.error('  Check FIREBASE_SERVICE_ACCOUNT_PATH in admin-app/.env and the error logged above.');
+    process.exit(1);
+  })();
+
+11.2 The one command (Git Bash)
+-------------------------------
+Replace the path with the location of YOUR repository:
+
+  cd "/c/path/to/your/repo/admin-app" && node scripts/send-test-push.js
+
+The reference machine used:
+
+  cd "/c/Users/hp/Downloads/moble app/admin-app" && node scripts/send-test-push.js
+
+Custom title/body:
+
+  cd "/c/path/to/your/repo/admin-app" && node scripts/send-test-push.js "My Title" "My message"
+
+Prerequisites: run "npm install" once in admin-app/, have
+admin-app/firebase-service-account.json present, and have
+FIREBASE_SERVICE_ACCOUNT_PATH set in admin-app/.env.
+
+11.3 Expected output
+--------------------
+
+  Sending test push to FCM topic "all_users"...
+    Title: TBT Test Notification
+    Body:  Hello! This is a test push notification from Git Bash.
+  [push] Firebase Admin initialized for project "mobile-app-d8c0f"
+  [push] Sent "undefined" notification test-<timestamp> to topic "all_users" (projects/mobile-app-d8c0f/messages/<message-id>)
+
+  SUCCESS: Firebase Cloud Messaging accepted the push.
+    FCM message id: projects/mobile-app-d8c0f/messages/<message-id>
+
+  - Exit code 0 = success, 1 = failure. Check it with: echo $?
+  - "undefined" in the [push] line is expected. The test push deliberately
+    has no notification type.
+  - Warning: the test goes to EVERY device subscribed to all_users,
+    including production users if you use the production Firebase project.
+
+
+================================================================================
+12. TEST RESULTS FROM THE WORKING IMPLEMENTATION
+================================================================================
+
+Tested successfully on a physical Android phone with the reference
+implementation:
+
+  [PASS] Firebase message acceptance - the Git Bash test returned
+         SUCCESS with an FCM message id of the form
+         projects/mobile-app-d8c0f/messages/<id>
+  [PASS] Foreground notification - heads-up local notification while the
+         app is open
+  [PASS] Background notification - system tray notification while the app
+         is in the background
+  [PASS] Fully closed / terminated app notification - system tray
+         notification after the app was swiped away
+  [PASS] Notification tap - opens the app
+  [PASS] App opening from terminated state - a tap cold-starts the app, goes
+         through splash, then lands on the Notifications screen
+  [PASS] Notification screen navigation - typed notifications route to their
+         content (post / podcast / e-book / support); untyped test pushes
+         stay on the Notifications list
+
+
+================================================================================
+13. EXPECTED BEHAVIOR
+================================================================================
+
+App OPEN (foreground)
+  - FCM delivers to FirebaseMessaging.onMessage. Android does NOT show it
+    automatically.
+  - The app shows a heads-up local notification on channel tbt_notifications
+    (small icon ic_stat_notification, red accent #D30814, big-text style).
+  - The in-app bell/unread badge refreshes.
+  - The same message id is never shown twice.
+
+App in BACKGROUND
+  - Android shows the notification in the system tray itself, using the
+    manifest defaults (channel, icon, color) and the payload's android
+    block.
+  - firebaseBackgroundMessageHandler runs and only logs. It must not show a
+    second notification.
+
+App FULLY CLOSED (terminated / swiped away)
+  - Same as background: Android shows it in the tray.
+  - Note: if the user FORCE-STOPS the app (Settings -> Apps -> Force stop),
+    Android blocks all FCM delivery until the app is opened again. This is
+    Android behavior, not a bug.
+
+User TAPS the notification
+  - Background: the app resumes, onMessageOpenedApp fires, and
+    NotificationsScreen opens.
+  - Terminated: the app cold-starts. getInitialMessage() returns the
+    message, and the tap is stored as pending. After splash/login, the home
+    screen mounts and NotificationsScreen opens.
+  - Foreground (local notification): onDidReceiveNotificationResponse fires
+    and NotificationsScreen opens.
+  - NotificationsScreen then marks the row as read and routes by type
+    (section 7). With no or an unknown type, the user stays on the list.
+
+
+================================================================================
+14. TROUBLESHOOTING
+================================================================================
+
+Notification permission
+  - Android 13+: Settings -> Apps -> TBT -> Notifications must be ON. If the
+    user denied the prompt, the app will not ask again. Enable it manually,
+    or clear the app data and reinstall.
+  - Check that the manifest has POST_NOTIFICATIONS.
+  - Debug log: "[FCM] Permission status: AuthorizationStatus.authorized".
+
+App launched at least once
+  - A fresh install receives NOTHING until the app has been opened once,
+    because that first launch is when it subscribes to all_users. Open it
+    once with internet on, then test.
+
+all_users topic subscription
+  - Debug log should show: [FCM] Subscribed to topic "all_users"
+  - If it shows "Subscribe ... failed", check the network. The app retries
+    after 10s and 60s, and again on every app start.
+  - Topic names are case-sensitive: all_users in the app AND the backend.
+
+Firebase configuration
+  - Log "Firebase initialization failed" means firebase_options.dart or
+    google-services.json is missing or wrong. Run flutterfire configure
+    again.
+  - The project ID in the app config and in the service account must BOTH be
+    mobile-app-d8c0f. A push sent from project A never reaches an app built
+    with project B's config.
+
+google-services.json
+  - Must be at android/app/google-services.json.
+  - package_name inside must equal applicationId (com.tbt.tbtmobileapp).
+  - The com.google.gms.google-services plugin must be applied in
+    android/app/build.gradle, with the classpath in android/build.gradle.
+
+Firebase Admin credentials
+  - "[push] Firebase service account not configured" means
+    FIREBASE_SERVICE_ACCOUNT_PATH/JSON is not set, or .env was not loaded.
+    Run from admin-app/.
+  - "service-account file not found" means the path is wrong. A relative
+    path is resolved against admin-app/.
+  - "does not contain valid JSON" means the file is corrupted or truncated,
+    or the inline JSON was not on one line.
+  - messaging/invalid-credential or an auth error means the key was revoked
+    or deleted. Generate a new key in the Firebase Console.
+  - Confirm the log says: Firebase Admin initialized for project "mobile-app-d8c0f"
+
+Android notification channel
+  - Channel ID tbt_notifications must match in the manifest, Dart and the
+    backend payload.
+  - If the user turned the channel off (Settings -> Apps -> TBT ->
+    Notifications -> TBT Notifications), nothing shows. Turn it on.
+  - Channel settings are fixed once created. After changing importance,
+    uninstall and reinstall (or use a new channel ID).
+  - Icon is a white square: the small icon is not a white-on-transparent
+    drawable (section 4.5).
+
+Network
+  - Phone: needs internet. Delivery can be delayed on metered or
+    battery-saver networks.
+  - Backend machine: needs outbound HTTPS to fcm.googleapis.com and
+    oauth2.googleapis.com.
+
+FCM message ID
+  - If the script prints a message id (projects/mobile-app-d8c0f/messages/...),
+    FCM ACCEPTED the message. From that point, delivery problems are on the
+    device side: permission, subscription, force-stop, battery optimization.
+  - If there is no message id, the problem is on the backend side:
+    credentials, network, or project mismatch.
+  - Topic sends are fire-and-forget. FCM does not report per-device delivery.
+    Allow a few seconds, occasionally up to about a minute.
+
+Background handler
+  - It must be a TOP-LEVEL function with @pragma('vm:entry-point'),
+    registered once through FirebaseMessaging.onBackgroundMessage.
+  - Duplicate notifications in background/closed state mean the handler is
+    showing a local notification. Remove that call.
+  - No notifications in background at all: check that the manifest does not
+    declare its own FirebaseMessagingService <service> (section 4.4).
+  - Aggressive OEM battery savers (e.g. Xiaomi, Oppo, Vivo) can block
+    background delivery. Set the app to "No restrictions" for battery.
+
+Terminated-state handling
+  - A tap from a killed app does nothing: check getInitialMessage() is
+    called in initialize(), check navigatorKey is set on MaterialApp, and
+    check that homeScreenMounted() is called from the home screen's
+    initState.
+  - The Notifications screen flashes and then disappears: it was pushed
+    before the splash pushReplacement. Use the pending-tap mechanism
+    (section 5.7).
+
+Useful commands
+  flutter clean && flutter pub get && flutter run      (fresh debug build)
+  adb logcat | grep -E "FCM|flutter"                   (live device logs)
+
+
+================================================================================
+15. SECURITY
+================================================================================
+
+  - NEVER commit firebase-service-account.json. It grants full admin access
+    to the Firebase project.
+  - NEVER commit .env (admin-app/.env). It holds the Supabase service-role
+    key and the Firebase credentials. Commit only .env.example, with
+    placeholders.
+  - NEVER expose private keys: do not paste them into chat, tickets,
+    screenshots, logs or documentation. Do not print them from scripts.
+  - NEVER share real FCM device tokens. The app prints the full token only
+    in debug builds. Do not copy it into documents or tickets.
+  - Do not put the service account in the Flutter app. The mobile app only
+    ever gets the client config (google-services.json / firebase_options.dart).
+  - If a key is ever committed or leaked: delete it immediately in Google
+    Cloud Console -> IAM -> Service accounts -> Keys, generate a new one, and
+    clean it out of the Git history. Deleting the file in a new commit is
+    NOT enough.
+
+.gitignore entries used in the reference repo (at the repo root):
+
+  # Firebase Admin service-account keys (full project admin access — never commit).
+  admin-app/firebase-service-account*.json
+  *-firebase-adminsdk-*.json
+
+  # Backend secrets
+  admin-app/.env
+
+Verify before committing:
+
+  git check-ignore -v admin-app/firebase-service-account.json   # must print a rule
+  git check-ignore -v admin-app/.env                            # must print a rule
+  git ls-files | grep -iE "service-account|adminsdk|\.env$"     # must print nothing
+
+
+================================================================================
+16. IMPLEMENTATION CHECKLIST
+================================================================================
+
+Firebase
+  [ ] Access to Firebase project mobile-app-d8c0f
+  [ ] Android app com.tbt.tbtmobileapp registered in the project
+  [ ] flutterfire configure run -> lib/firebase_options.dart created
+  [ ] android/app/google-services.json present, package_name correct
+
+Flutter dependencies
+  [ ] firebase_core ^3.15.2 added
+  [ ] firebase_messaging ^15.2.10 added
+  [ ] flutter_local_notifications ^17.2.4 added
+  [ ] flutter pub get
+
+Android build
+  [ ] classpath 'com.google.gms:google-services:4.4.2' in android/build.gradle
+  [ ] id "com.google.gms.google-services" in android/app/build.gradle plugins
+  [ ] coreLibraryDesugaringEnabled true + desugar_jdk_libs dependency
+  [ ] Java 11 source/target + kotlinOptions jvmTarget 11
+  [ ] applicationId / namespace = com.tbt.tbtmobileapp
+  [ ] AGP 8.7.0 / Gradle 8.10.2 (or your repo's working equivalents)
+
+AndroidManifest.xml
+  [ ] POST_NOTIFICATIONS, INTERNET, RECEIVE_BOOT_COMPLETED, VIBRATE permissions
+  [ ] MainActivity launchMode singleTop + FLUTTER_NOTIFICATION_CLICK filter
+  [ ] default_notification_channel_id = tbt_notifications
+  [ ] default_notification_icon = @drawable/ic_stat_notification
+  [ ] default_notification_color = @color/notification_color
+  [ ] NO custom FirebaseMessagingService <service> declared
+
+Android resources
+  [ ] res/drawable/ic_stat_notification.xml (white on transparent)
+  [ ] res/values/colors.xml with notification_color #D30814
+
+Flutter code
+  [ ] Top-level firebaseBackgroundMessageHandler with @pragma('vm:entry-point')
+      that only logs
+  [ ] FirebaseNotificationService with initialize(), channel, foreground
+      handler, permission, token log, all_users subscription with retry,
+      token-refresh re-subscribe, tap handling, pending-tap mechanism
+  [ ] NotificationType enum + fromDbValue (null for unknown)
+  [ ] NotificationsScreen(openNotification:) + _openPushNotification +
+      _onNotificationTap with "case null:" no-op
+  [ ] main(): ensureInitialized -> Firebase.initializeApp ->
+      FirebaseNotificationService.initialize() -> Supabase -> runApp
+  [ ] MaterialApp navigatorKey: FirebaseNotificationService.navigatorKey
+  [ ] Home screen initState/dispose call homeScreenMounted/homeScreenUnmounted
+
+Database
+  [ ] mobile_notifications table with type CHECK constraint matching the enum
+
+Backend (admin-app)
+  [ ] npm install firebase-admin
+  [ ] Service-account key downloaded -> admin-app/firebase-service-account.json
+  [ ] .gitignore covers the key and .env (verify with git check-ignore)
+  [ ] admin-app/.env: FIREBASE_SERVICE_ACCOUNT_PATH=./firebase-service-account.json
+  [ ] .env.example updated with placeholders
+  [ ] services/pushService.js (topic all_users, channel/icon/color, personal
+      types skipped, never throws)
+  [ ] Each send-notification route: insert row -> sendNotificationPush(row)
+  [ ] scripts/send-test-push.js (reuses pushService)
+  [ ] npm test passes (pushService tests)
+
+Device test
+  [ ] Build and install the app on a physical Android phone
+  [ ] Open the app once, allow notifications, confirm "Subscribed to topic"
+      in the logs
+  [ ] Run the Git Bash test -> SUCCESS + message id
+  [ ] Verify foreground / background / terminated delivery
+  [ ] Verify tap from each state opens the Notifications screen
+  [ ] Send a real notification from the admin panel and verify routing
+
+
+================================================================================
+17. FINAL VERIFICATION
+================================================================================
+
+Flow: Git Bash -> Firebase Admin SDK -> FCM -> Android phone -> notification
+
+Step 1 - Prepare the phone
+  a. Install the app:  flutter run   (or flutter build apk --release and
+     install the APK)
+  b. Open the app once, with internet on.
+  c. Tap "Allow" on the notification permission prompt (Android 13+).
+  d. Optional, in a debug build: check the logs show
+       [FCM] Permission status: AuthorizationStatus.authorized
+       [FCM] Subscribed to topic "all_users"
+  e. Press Home to put the app in the background. Do NOT force-stop it.
+
+Step 2 - Prepare the backend (one time)
+  a. cd "/c/path/to/your/repo/admin-app"
+  b. npm install
+  c. Confirm admin-app/firebase-service-account.json exists.
+  d. Confirm admin-app/.env contains
+     FIREBASE_SERVICE_ACCOUNT_PATH=./firebase-service-account.json
+
+Step 3 - Send the test from Git Bash
+
+  cd "/c/path/to/your/repo/admin-app" && node scripts/send-test-push.js
+
+Step 4 - Check the terminal
+  - It must print: Firebase Admin initialized for project "mobile-app-d8c0f"
+  - It must print: SUCCESS: Firebase Cloud Messaging accepted the push.
+  - It must print an FCM message id: projects/mobile-app-d8c0f/messages/<id>
+  - echo $?  should print 0
+  If it prints FAILED, see section 14 (Firebase Admin credentials).
+
+Step 5 - Check the phone (within a few seconds)
+  - A notification appears:
+        TBT Test Notification
+        Hello! This is a test push notification from Git Bash.
+    with the red bell icon.
+  - Tap it: the app opens on the Notifications screen.
+
+Step 6 - Repeat for every app state
+  - App open (foreground)    -> run the command -> heads-up notification
+  - App in background        -> run the command -> tray notification
+  - App swiped away (closed) -> run the command -> tray notification -> tap
+                                -> app cold-starts -> Notifications screen
+
+Step 7 - End-to-end with real content
+  - In the admin panel, send a notification for a published community post
+    (or a podcast / e-book).
+  - The API response contains "push": { "sent": true, "messageId": "..." }.
+  - The phone receives it. Tapping it opens that specific content.
+
+If all of the above pass, the FCM setup is complete.
+
+
+================================================================================
+18. IMPORTANT NOTE FOR ANOTHER DEVELOPER
+================================================================================
+
+This documentation describes the implementation that was already
+successfully tested in another TBT app repository. You must adapt file paths
+and existing architecture to your repository instead of blindly overwriting
+existing notification code.
+
+In practice:
+  - If your repo already has a notification service, a Notifications
+    screen, or an unread badge, integrate this logic into them. Do not
+    replace them wholesale.
+  - Screen and class names in section 7 (CommunityScreen, PodcastScreen,
+    BookDetailsScreen, SupportCenterScreen, NotificationBadge, ...) are from
+    the reference repo. Map them to your equivalents.
+  - Keep exactly ONE place that calls FirebaseMessaging.onBackgroundMessage,
+    ONE place that creates the tbt_notifications channel, and ONE backend
+    function that sends pushes (sendNotificationPush). Duplicates cause
+    double notifications or behavior that drifts apart.
+  - Keep these identifiers identical across app and backend: topic
+    all_users, channel tbt_notifications, icon ic_stat_notification, the
+    eight type strings, and the data keys notification_id / type /
+    reference_id / reference_type.
+  - Credentials are never part of this document. Get the Firebase
+    service-account key from the Firebase Console yourself (or from your
+    team's secret store), and keep it out of Git.
+
+================================================================================
+END OF DOCUMENT
+================================================================================
