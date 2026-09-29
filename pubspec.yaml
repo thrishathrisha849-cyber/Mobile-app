@@ -54,11 +54,12 @@ dependencies:
   url_launcher: ^6.3.0
   just_audio: ^0.9.40
   shared_preferences: ^2.3.2
-  syncfusion_flutter_pdfviewer: 26.2.14
-  speech_to_text: ^6.6.0
+  syncfusion_flutter_pdfviewer: ^31.1.19
+  speech_to_text: ^7.4.0
   permission_handler: ^11.3.1
   http: ^1.2.0
   http_parser: ^4.0.0
+  flutter_local_notifications: ^17.2.4
 
 dependency_overrides:
   photo_manager: 3.8.2

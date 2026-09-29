@@ -103,13 +103,25 @@ Future<void> main() async {
   appThemeNotifier.value = savedTheme;
 
   // ── Firebase initialization ──────────────────
+  // Kept separate from push setup so a notification failure can't be
+  // mistaken for (or mask) a Firebase config failure, and vice versa.
+  var firebaseReady = false;
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
-    await FirebaseNotificationService.initialize();
+    firebaseReady = true;
   } catch (e) {
-    debugPrint('Firebase/FCM initialization failed: $e');
+    debugPrint('Firebase initialization failed: $e');
+  }
+
+  // ── Push notifications (FCM) ─────────────────
+  if (firebaseReady) {
+    try {
+      await FirebaseNotificationService.initialize();
+    } catch (e) {
+      debugPrint('Push notification initialization failed: $e');
+    }
   }
 
   // ── Supabase initialization ──────────────────
@@ -155,6 +167,7 @@ class MyApp extends StatelessWidget {
         return MaterialApp(
           title: 'Tamil Business Tribe',
           debugShowCheckedModeBanner: false,
+          navigatorKey: FirebaseNotificationService.navigatorKey,
           navigatorObservers: [routeObserver],
           themeMode: currentMode,
           theme: ThemeData.light().copyWith(
@@ -2946,6 +2959,9 @@ class _PostPopupScreenState extends State<PostPopupScreen> {
   void initState() {
     super.initState();
     NotificationBadge.instance.ensureLoaded();
+    // Opens the Notifications screen if the app was launched/resumed by
+    // tapping a push before the home screen existed.
+    FirebaseNotificationService.homeScreenMounted();
     _fetchDynamicHabits();
     _ritualPageController = PageController(initialPage: 0);
     _carouselPageController = PageController(initialPage: 1000);
@@ -2970,6 +2986,7 @@ class _PostPopupScreenState extends State<PostPopupScreen> {
 
   @override
   void dispose() {
+    FirebaseNotificationService.homeScreenUnmounted();
     _carouselTimer?.cancel();
     _backupPollTimer?.cancel();
     if (_carouselSubscription != null) {

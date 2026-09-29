@@ -2,6 +2,7 @@ const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const path = require('path');
 const multer = require('multer');
+const { sendNotificationPush } = require('./services/pushService');
 require('dotenv').config();
 
 const app = express();
@@ -163,7 +164,8 @@ app.post('/api/admin/community/posts/:id/send-notification', async (req, res) =>
       }])
       .select();
     if (error) throw error;
-    res.status(201).json({ success: true, notification: data[0] });
+    const push = await sendNotificationPush(data[0]);
+    res.status(201).json({ success: true, notification: data[0], push });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -410,7 +412,8 @@ app.post('/api/admin/podcast/series/:id/send-notification', async (req, res) => 
       }])
       .select();
     if (error) throw error;
-    res.status(201).json({ success: true, notification: data[0] });
+    const push = await sendNotificationPush(data[0]);
+    res.status(201).json({ success: true, notification: data[0], push });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -514,7 +517,8 @@ app.post('/api/admin/podcast/episodes/:id/send-notification', async (req, res) =
       }])
       .select();
     if (error) throw error;
-    res.status(201).json({ success: true, notification: data[0] });
+    const push = await sendNotificationPush(data[0]);
+    res.status(201).json({ success: true, notification: data[0], push });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -910,7 +914,8 @@ app.post('/api/admin/ebooks/books/:id/send-notification', async (req, res) => {
       }])
       .select();
     if (error) throw error;
-    res.status(201).json({ success: true, notification: data[0] });
+    const push = await sendNotificationPush(data[0]);
+    res.status(201).json({ success: true, notification: data[0], push });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -999,7 +1004,8 @@ app.post('/api/admin/ebooks/banner/:id/send-notification', async (req, res) => {
       }])
       .select();
     if (error) throw error;
-    res.status(201).json({ success: true, notification: data[0] });
+    const push = await sendNotificationPush(data[0]);
+    res.status(201).json({ success: true, notification: data[0], push });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -1859,7 +1865,8 @@ app.post('/api/admin/support/faqs/:id/send-notification', async (req, res) => {
       }])
       .select();
     if (error) throw error;
-    res.status(201).json({ success: true, notification: data[0] });
+    const push = await sendNotificationPush(data[0]);
+    res.status(201).json({ success: true, notification: data[0], push });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -2014,7 +2021,8 @@ app.post('/api/admin/support/tickets/:id/send-notification', async (req, res) =>
       }])
       .select();
     if (error) throw error;
-    res.status(201).json({ success: true, notification: data[0] });
+    const push = await sendNotificationPush(data[0]);
+    res.status(201).json({ success: true, notification: data[0], push });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -2086,7 +2094,8 @@ app.post('/api/admin/support/feedback/:id/send-notification', async (req, res) =
       }])
       .select();
     if (error) throw error;
-    res.status(201).json({ success: true, notification: data[0] });
+    const push = await sendNotificationPush(data[0]);
+    res.status(201).json({ success: true, notification: data[0], push });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

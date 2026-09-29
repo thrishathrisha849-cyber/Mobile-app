@@ -6034,7 +6034,13 @@ Future<void> _pickAndSaveProfileImage(BuildContext context, ImageSource source, 
 }
 
 class NotificationsScreen extends StatefulWidget {
-  const NotificationsScreen({super.key});
+  /// Set when opened from a tapped push notification (see
+  /// FirebaseNotificationService): once the list loads, this item is opened
+  /// exactly as if the user had tapped it in the list. Same shape as
+  /// NotificationService.fetchNotifications() items (id/type/referenceId).
+  final Map<String, dynamic>? openNotification;
+
+  const NotificationsScreen({super.key, this.openNotification});
 
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
@@ -6047,7 +6053,21 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   @override
   void initState() {
     super.initState();
-    _loadNotifications();
+    _loadNotifications().then((_) => _openPushNotification());
+  }
+
+  /// Opens the notification a push tap pointed at. Prefers the loaded list
+  /// row (so its read state updates in the list), falling back to the push
+  /// payload if it isn't in the list or the load failed.
+  void _openPushNotification() {
+    final pushed = widget.openNotification;
+    if (!mounted || pushed == null || pushed['type'] == null) return;
+    final id = pushed['id']?.toString();
+    final item = _notifications.firstWhere(
+      (n) => id != null && n['id']?.toString() == id,
+      orElse: () => Map<String, dynamic>.from(pushed),
+    );
+    _onNotificationTap(item);
   }
 
   Future<void> _loadNotifications() async {
@@ -6144,8 +6164,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
 
     try {
-      switch (type) {
-        case 'community_post':
+      switch (NotificationType.fromDbValue(type)) {
+        case NotificationType.communityPost:
           if (referenceId == null) return notFound();
           final post =
               await NotificationService.instance.fetchCommunityPostById(referenceId);
@@ -6161,7 +6181,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   builder: (context) => CommunityScreen(highlightPost: mappedPost)));
           break;
 
-        case 'podcast_series':
+        case NotificationType.podcastSeries:
           if (referenceId == null) return notFound();
           final series =
               await PodcastService.instance.fetchSeriesById(referenceId);
@@ -6174,7 +6194,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       PodcastSeriesDetailScreen(seriesId: referenceId)));
           break;
 
-        case 'podcast_episode':
+        case NotificationType.podcastEpisode:
           if (referenceId == null) return notFound();
           final episode =
               await PodcastService.instance.fetchEpisodeById(referenceId);
@@ -6185,7 +6205,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               MaterialPageRoute(builder: (context) => const PodcastScreen()));
           break;
 
-        case 'ebook_book':
+        case NotificationType.ebookBook:
           if (referenceId == null) return notFound();
           final book = await EBookService.instance.fetchBookById(referenceId);
           if (!mounted) return;
@@ -6194,14 +6214,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               MaterialPageRoute(builder: (context) => BookDetailsScreen(book: book)));
           break;
 
-        case 'ebook_banner':
+        case NotificationType.ebookBanner:
           Navigator.push(
               context,
               MaterialPageRoute(
                   builder: (context) => const EBooksLibraryScreen()));
           break;
 
-        case 'support_faq':
+        case NotificationType.supportFaq:
           if (referenceId != null) {
             final faq = await SupportService.instance.fetchFaqById(referenceId);
             if (!mounted) return;
@@ -6216,13 +6236,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               MaterialPageRoute(builder: (context) => const SupportCenterScreen()));
           break;
 
-        case 'support_ticket':
-        case 'support_feedback':
+        case NotificationType.supportTicket:
+        case NotificationType.supportFeedback:
           Navigator.push(context,
               MaterialPageRoute(builder: (context) => const SupportCenterScreen()));
           break;
 
-        default:
+        case null: // Unknown type (e.g. the FCM test type `general`): no route.
           break;
       }
     } catch (e) {

@@ -6,7 +6,13 @@ CREATE TABLE IF NOT EXISTS mobile_notifications (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   title VARCHAR(255) NOT NULL,
   message TEXT NOT NULL,
-  type VARCHAR(50) NOT NULL DEFAULT 'community_post',
+  -- Allowed values must match NotificationType in lib/notification_service.dart.
+  -- Existing databases: add this constraint with mobile_notifications_type_check.sql.
+  type VARCHAR(50) NOT NULL DEFAULT 'community_post'
+    CONSTRAINT mobile_notifications_type_check
+    CHECK (type IN ('community_post', 'podcast_series', 'podcast_episode',
+                    'ebook_book', 'ebook_banner', 'support_faq',
+                    'support_ticket', 'support_feedback')),
   reference_id UUID,
   reference_type VARCHAR(50),
   is_read BOOLEAN NOT NULL DEFAULT false,

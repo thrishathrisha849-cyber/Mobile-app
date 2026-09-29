@@ -1,6 +1,40 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+/// Every value `mobile_notifications.type` may hold. The database enforces
+/// the same list with the `mobile_notifications_type_check` constraint
+/// (admin-app/mobile_notifications_type_check.sql); keep them in sync —
+/// test/notification_type_test.dart fails if they drift apart.
+///
+/// The type travels as its [dbValue] string everywhere outside Dart (the
+/// database, admin-app's server.js, and the FCM `data.type` field), so only
+/// convert at the edges with [fromDbValue] / [dbValue].
+enum NotificationType {
+  communityPost('community_post'),
+  podcastSeries('podcast_series'),
+  podcastEpisode('podcast_episode'),
+  ebookBook('ebook_book'),
+  ebookBanner('ebook_banner'),
+  supportFaq('support_faq'),
+  supportTicket('support_ticket'),
+  supportFeedback('support_feedback');
+
+  const NotificationType(this.dbValue);
+
+  /// Exact string stored in the database and sent as FCM `data.type`.
+  final String dbValue;
+
+  /// Exact-match lookup; returns null for anything that isn't one of the
+  /// database values (e.g. the FCM test type `general`, or a typo), so
+  /// callers can keep their "unknown type" fallback.
+  static NotificationType? fromDbValue(String? value) {
+    for (final type in values) {
+      if (type.dbValue == value) return type;
+    }
+    return null;
+  }
+}
+
 /// Data access layer for mobile-facing app notifications (broadcasts sent
 /// from the admin panel, e.g. when a community post is published). Mirrors
 /// `legal_service.dart` / `support_service.dart`: talks directly to

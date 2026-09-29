@@ -45,22 +45,19 @@
             </intent-filter>
         </activity>
 
-        <!-- Firebase Cloud Messaging Service -->
-        <service
-            android:name="com.google.firebase.messaging.FirebaseMessagingService"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="com.google.firebase.MESSAGING_EVENT" />
-            </intent-filter>
-        </service>
+        <!-- No FCM <service> here on purpose: firebase_messaging's own manifest
+             registers FlutterFirebaseMessagingService for MESSAGING_EVENT, and
+             declaring the base FirebaseMessagingService here would shadow it
+             (e.g. token refreshes would never reach Dart). -->
 
-        <!-- Notification default channel and icon -->
+        <!-- Notification default channel and icon. The channel itself is
+             created at startup by FirebaseNotificationService. -->
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="tbt_notifications" />
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_icon"
-            android:resource="@mipmap/ic_launcher" />
+            android:resource="@drawable/ic_stat_notification" />
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_color"
             android:resource="@color/notification_color" />

@@ -30,8 +30,17 @@ android {
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        // Required by flutter_local_notifications (used to show FCM pushes
+        // while the app is in the foreground).
+        coreLibraryDesugaringEnabled true
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+
+    // AGP 8 fails the build if Java and Kotlin target different JVM versions
+    // (Kotlin otherwise defaults to the JDK's own version, e.g. 17).
+    kotlinOptions {
+        jvmTarget = JavaVersion.VERSION_11.toString()
     }
 
     defaultConfig {
@@ -56,4 +65,8 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:1.2.2'
 }
