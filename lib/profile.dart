@@ -6034,7 +6034,13 @@ Future<void> _pickAndSaveProfileImage(BuildContext context, ImageSource source, 
 }
 
 class NotificationsScreen extends StatefulWidget {
-  const NotificationsScreen({super.key});
+  /// Set when opened from a tapped push notification (see
+  /// FirebaseNotificationService): once the list loads, this item is opened
+  /// exactly as if the user had tapped it in the list. Same shape as
+  /// NotificationService.fetchNotifications() items (id/type/referenceId).
+  final Map<String, dynamic>? openNotification;
+
+  const NotificationsScreen({super.key, this.openNotification});
 
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
@@ -6047,7 +6053,21 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   @override
   void initState() {
     super.initState();
-    _loadNotifications();
+    _loadNotifications().then((_) => _openPushNotification());
+  }
+
+  /// Opens the notification a push tap pointed at. Prefers the loaded list
+  /// row (so its read state updates in the list), falling back to the push
+  /// payload if it isn't in the list or the load failed.
+  void _openPushNotification() {
+    final pushed = widget.openNotification;
+    if (!mounted || pushed == null || pushed['type'] == null) return;
+    final id = pushed['id']?.toString();
+    final item = _notifications.firstWhere(
+      (n) => id != null && n['id']?.toString() == id,
+      orElse: () => Map<String, dynamic>.from(pushed),
+    );
+    _onNotificationTap(item);
   }
 
   Future<void> _loadNotifications() async {

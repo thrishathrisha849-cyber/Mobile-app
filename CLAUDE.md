@@ -24,7 +24,7 @@ They are developed and run independently; changes to one do not require rebuildi
 ### Admin app (run from `admin-app/`)
 - Install deps: `npm install`
 - Start server: `npm start` (runs `node server.js`, default port 5000, configurable via `PORT` env var)
-- Requires `admin-app/.env` with `SUPABASE_URL` and `SUPABASE_KEY` (service-role key, since the server does writes the anon key can't do).
+- Requires `admin-app/.env` with `SUPABASE_URL` and `SUPABASE_KEY` (service-role key, since the server does writes the anon key can't do), and optionally `FIREBASE_SERVICE_ACCOUNT_PATH` (or `FIREBASE_SERVICE_ACCOUNT_JSON`) for FCM pushes — without it pushes are skipped but in-app notifications still work (see `.env.example`). The service-account JSON is gitignored; never commit it.
 - No test suite or lint script defined for this app.
 
 ## Architecture
@@ -41,7 +41,8 @@ They are developed and run independently; changes to one do not require rebuildi
 - **Global mutable state without a state-management library:** e.g. `communityPosts` (top-level list in `community.dart`) is mutated directly and persisted to a local JSON file (`savePostsToLocal`/`loadPostsFromLocal`); there's no Provider/Bloc/Riverpod in this codebase. `PodcastPlayerController` (a `ChangeNotifier`) is the one exception, used to keep podcast playback state/mini-player alive across screens.
 - **`ConnectivityWrapper`** (`connectivity_wrapper.dart`) wraps the app to show a no-internet overlay; check it when debugging connectivity-related UI issues.
 - **`packages/native_glass_navbar`** is a local Flutter package (path dependency via `dependency_overrides` in `pubspec.yaml`) providing the custom bottom nav bar — edit it directly if the nav bar needs changes, it's not pulled from pub.dev.
-- Firebase (Core + Messaging/FCM) is initialized in `main()` before Supabase; `firebase_notification_service.dart` owns all FCM setup, token retrieval, and foreground/background message handling. `firebase_options.dart` is generated (FlutterFire) — regenerate via FlutterFire CLI rather than hand-editing if platform config changes.
+- Firebase (Core + Messaging/FCM) is initialized in `main()` before Supabase; `firebase_notification_service.dart` owns all FCM setup, token retrieval, and foreground/background message handling. `firebase_options.dart` is generated (FlutterFire) — regenerate via FlutterFire CLI rather than hand-editing if platform config changes. Firebase is configured for **Android only** (no iOS config/APNs yet).
+- **Push notifications are topic-based, not per-device:** every install subscribes to the `all_users` FCM topic on startup, and `admin-app/services/pushService.js` pushes each new `mobile_notifications` row to that topic (the in-app Notifications list in `profile.dart` stays the source of truth). Foreground pushes are shown via `flutter_local_notifications` on the `tbt_notifications` channel; background/closed ones are shown by Android itself, so the background handler must never show one too (duplicates). A tap opens `NotificationsScreen(openNotification: …)`, which reuses its existing per-type `_onNotificationTap` routing — add routing for a new notification type there, not in the FCM service. The Android build uses AGP 8.7.0 / Gradle 8.10.2 / Java+Kotlin JVM target 11 (Flutter 3.29's template versions); `flutter_local_notifications` is still on `^17.2.4` (chosen when the project was on AGP 7.3) — v19+ would additionally need `desugar_jdk_libs` 2.1.4.
 
 ### Admin app (`admin-app/`)
 
