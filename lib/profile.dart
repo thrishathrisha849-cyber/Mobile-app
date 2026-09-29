@@ -6164,8 +6164,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
 
     try {
-      switch (type) {
-        case 'community_post':
+      switch (NotificationType.fromDbValue(type)) {
+        case NotificationType.communityPost:
           if (referenceId == null) return notFound();
           final post =
               await NotificationService.instance.fetchCommunityPostById(referenceId);
@@ -6181,7 +6181,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   builder: (context) => CommunityScreen(highlightPost: mappedPost)));
           break;
 
-        case 'podcast_series':
+        case NotificationType.podcastSeries:
           if (referenceId == null) return notFound();
           final series =
               await PodcastService.instance.fetchSeriesById(referenceId);
@@ -6194,7 +6194,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       PodcastSeriesDetailScreen(seriesId: referenceId)));
           break;
 
-        case 'podcast_episode':
+        case NotificationType.podcastEpisode:
           if (referenceId == null) return notFound();
           final episode =
               await PodcastService.instance.fetchEpisodeById(referenceId);
@@ -6205,7 +6205,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               MaterialPageRoute(builder: (context) => const PodcastScreen()));
           break;
 
-        case 'ebook_book':
+        case NotificationType.ebookBook:
           if (referenceId == null) return notFound();
           final book = await EBookService.instance.fetchBookById(referenceId);
           if (!mounted) return;
@@ -6214,14 +6214,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               MaterialPageRoute(builder: (context) => BookDetailsScreen(book: book)));
           break;
 
-        case 'ebook_banner':
+        case NotificationType.ebookBanner:
           Navigator.push(
               context,
               MaterialPageRoute(
                   builder: (context) => const EBooksLibraryScreen()));
           break;
 
-        case 'support_faq':
+        case NotificationType.supportFaq:
           if (referenceId != null) {
             final faq = await SupportService.instance.fetchFaqById(referenceId);
             if (!mounted) return;
@@ -6236,13 +6236,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               MaterialPageRoute(builder: (context) => const SupportCenterScreen()));
           break;
 
-        case 'support_ticket':
-        case 'support_feedback':
+        case NotificationType.supportTicket:
+        case NotificationType.supportFeedback:
           Navigator.push(context,
               MaterialPageRoute(builder: (context) => const SupportCenterScreen()));
           break;
 
-        default:
+        case null: // Unknown type (e.g. the FCM test type `general`): no route.
           break;
       }
     } catch (e) {
