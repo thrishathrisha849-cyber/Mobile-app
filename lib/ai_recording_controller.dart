@@ -148,8 +148,8 @@ class AiRecordingController extends ChangeNotifier {
         listenOptions: SpeechListenOptions(
           partialResults: true,
           cancelOnError: false,
+          pauseFor: _pauseFor,
         ),
-        pauseFor: _pauseFor,
       );
       return true;
     } catch (_) {

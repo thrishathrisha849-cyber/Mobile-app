@@ -46,6 +46,11 @@ app.*.map.json
 admin-app/.env
 admin-app/node_modules/
 
+# Firebase Admin service-account keys (full project admin access — never commit).
+# Covers the suggested name and the Firebase Console's default download name.
+admin-app/firebase-service-account*.json
+*-firebase-adminsdk-*.json
+
 # Android release signing (never commit — losing this breaks future
 # in-place updates for anyone who already has a build signed with it)
 /android/key.properties
