@@ -6,6 +6,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'firebase_options.dart';
 import 'notification_service.dart';
 import 'profile.dart' show NotificationsScreen;
@@ -61,13 +62,28 @@ class FirebaseNotificationService {
 
   static bool _initialized = false;
 
-  // FCM token stored here after initialization (diagnostics only — delivery
-  // is by topic, so the token is never sent to a server).
-  static String? fcmToken;
+  /// This device's FCM registration token, kept current across refreshes.
+  /// Delivery is by topic, so nothing sends it to a server yet; a future
+  /// per-user token registration can listen to this.
+  static final ValueNotifier<String?> token = ValueNotifier(null);
+
+  static String? get fcmToken => token.value;
 
   // Stream controller so the app can listen to incoming messages
   static final ValueNotifier<RemoteMessage?> onMessageReceived =
       ValueNotifier(null);
+
+  /// The complete `data` payload of the most recently tapped notification,
+  /// for future deep-link handling. Current routing only uses the subset
+  /// passed to NotificationsScreen.
+  static final ValueNotifier<Map<String, dynamic>?> lastOpenedData =
+      ValueNotifier(null);
+
+  /// SharedPreferences flag: the notification permission prompt has been
+  /// shown once, so it is never shown again automatically (the user can
+  /// still enable notifications from system settings).
+  static const String _permissionAskedKey = 'fcm_permission_requested';
+  static bool _permissionCheckStarted = false;
 
   // Message ids already shown as a local notification, so a redelivered
   // message is never shown twice.
@@ -122,8 +138,10 @@ class FirebaseNotificationService {
       }
     });
 
-    // 6. Permission, token and topic subscription (network/user dependent).
-    unawaited(_requestPermissionAndSubscribe());
+    // 6. Token and topic subscription (network dependent). Neither needs the
+    // notification permission, which is requested later from the home
+    // screen (see homeScreenMounted).
+    unawaited(_fetchTokenAndSubscribe());
   }
 
   static Future<void> _guard(String step, Future<void> Function() body) async {
@@ -157,9 +175,30 @@ class FirebaseNotificationService {
   }
 
   // ── Permission / token / topic ────────────────
-  static Future<void> _requestPermissionAndSubscribe() async {
+
+  /// Whether to show the notification permission prompt: only if it isn't
+  /// already granted and has never been shown by this app before.
+  @visibleForTesting
+  static bool shouldRequestPermission(
+          AuthorizationStatus status, bool alreadyAsked) =>
+      status != AuthorizationStatus.authorized &&
+      status != AuthorizationStatus.provisional &&
+      !alreadyAsked;
+
+  /// On Android 13+ this shows the POST_NOTIFICATIONS runtime prompt, at
+  /// most once per install; older Android versions are already authorized.
+  static Future<void> _requestPermissionOnce() async {
+    if (_permissionCheckStarted) return;
+    _permissionCheckStarted = true;
     await _guard('permission request', () async {
-      // On Android 13+ this shows the POST_NOTIFICATIONS runtime prompt.
+      final current = await _messaging.getNotificationSettings();
+      final prefs = await SharedPreferences.getInstance();
+      final alreadyAsked = prefs.getBool(_permissionAskedKey) ?? false;
+      if (!shouldRequestPermission(current.authorizationStatus, alreadyAsked)) {
+        debugPrint('[FCM] Permission status: ${current.authorizationStatus}');
+        return;
+      }
+      await prefs.setBool(_permissionAskedKey, true);
       final settings = await _messaging.requestPermission(
         alert: true,
         badge: true,
@@ -167,10 +206,12 @@ class FirebaseNotificationService {
       );
       debugPrint('[FCM] Permission status: ${settings.authorizationStatus}');
     });
+  }
 
+  static Future<void> _fetchTokenAndSubscribe() async {
     await _guard('token fetch', () async {
-      fcmToken = await _messaging.getToken();
-      _logToken('FCM token', fcmToken);
+      token.value = await _messaging.getToken();
+      _logToken('FCM token', token.value);
     });
 
     await _subscribeToAllUsers();
@@ -195,7 +236,7 @@ class FirebaseNotificationService {
   }
 
   static void _onTokenRefresh(String newToken) {
-    fcmToken = newToken;
+    token.value = newToken;
     _logToken('FCM token refreshed', newToken);
     unawaited(_subscribeToAllUsers());
   }
@@ -281,6 +322,7 @@ class FirebaseNotificationService {
   // shape NotificationService.fetchNotifications() returns.
   static void _handleTap(Map<String, dynamic> data) {
     debugPrint('[FCM Tap] data=$data');
+    lastOpenedData.value = Map<String, dynamic>.unmodifiable(data);
     _pendingTap = {
       'id': data['notification_id'],
       'type': data['type'],
@@ -291,10 +333,12 @@ class FirebaseNotificationService {
   }
 
   /// Called by the home screen (PostPopupScreen) when it mounts/unmounts;
-  /// a tap is only acted on once the user is past splash/login.
+  /// a tap is only acted on, and the permission prompt only shown, once the
+  /// user is past splash/login.
   static void homeScreenMounted() {
     _homeScreensMounted++;
     _openPendingTap();
+    if (_initialized) unawaited(_requestPermissionOnce());
   }
 
   static void homeScreenUnmounted() {
